@@ -14,11 +14,10 @@ I built it for myself because other tools didn’t work for me.
 - Mouse, keyboard, scrolling and text paste.
 - Screenshots and silent screen recording.
 - Remote rotation, Home and App Switcher.
-- Always on Top and automatic reconnection.
+- Optional iPhone bezels, Always on Top and automatic reconnection.
 
 ## Incoming features
 
-- iPhone bezels.
 - Easier setup and a downloadable app.
 - AI-agent access for real-device testing.
 - Audio and Wi-Fi support (under investigation).

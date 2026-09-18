@@ -13,6 +13,7 @@ import SwiftUI
   @Published var hasPicture = false
   @Published var fps = 0
   @Published var dimensions = ""
+  @Published private(set) var screenSize = CGSize(width: 1206, height: 2622)
   @Published private(set) var inputEpoch: UInt64 = 0
   @Published private(set) var fitWindowEpoch: UInt64 = 0
   @Published private(set) var isLandscape = false
@@ -321,6 +322,7 @@ import SwiftUI
     hasPicture = true
     let displaySize =
       ScreenPresentation(encoded: frame.size, rawOrientation: frame.orientation)?.size ?? frame.size
+    if screenSize != displaySize { screenSize = displaySize }
     isLandscape = displaySize.width > displaySize.height
     if rotation.observe(
       ordinal: frame.ordinal, orientation: frame.orientation,

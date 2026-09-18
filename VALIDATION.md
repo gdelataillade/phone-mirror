@@ -351,3 +351,19 @@ results above replace that earlier unverified recovery status.
   1024 × 1024, and packages AppIcon.icns via CFBundleIconFile.
 - Verified plist syntax, decoded the resulting icns with iconutil, checked its
   largest representation, and verified the app signature. Restarted the app.
+
+## Optional iPhone bezel, 18 September
+
+- Added a dark rounded frame with a metallic edge, enabled by default. Toggle
+  View → Show iPhone Bezel or Option–Command–B; the preference is saved.
+- The view fits the current screen aspect ratio inside the frame. Touch uses the
+  resized Metal surface; the decorative border is outside its bounds. Rounded
+  screen corners reject initial taps. No simulated camera cutout is added.
+- Screenshot and recording exporters still use the decoded stream directly and
+  therefore exclude the decorative bezel.
+- Release build, signature verification and all 85 existing tests pass. Live
+  portrait appearance, opening Settings by tapping, toggling while the phone
+  has keyboard focus, and Fit Window were checked. App left with bezel enabled.
+- To complete visual QA, open a harmless landscape-capable app, rotate both ways,
+  resize the window, and check edge taps and scrolling. Live landscape and saved
+  captures with the bezel enabled were not rechecked in this pass.

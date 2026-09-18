@@ -5,6 +5,7 @@ import SwiftUI
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
   @StateObject private var model = MirrorModel()
   @AppStorage("alwaysOnTop") private var alwaysOnTop = false
+  @AppStorage("showDeviceBezel") private var showDeviceBezel = true
   var body: some Scene {
     Window("PhoneMirror", id: "mirror") {
       MirrorWindow(model: model)
@@ -27,6 +28,10 @@ import SwiftUI
       CommandGroup(after: .windowArrangement) {
         Toggle("Always on Top", isOn: $alwaysOnTop)
           .keyboardShortcut("t", modifiers: [.command, .option])
+      }
+      CommandGroup(after: .toolbar) {
+        Toggle("Show iPhone Bezel", isOn: $showDeviceBezel)
+          .keyboardShortcut("b", modifiers: [.command, .option])
       }
       CommandMenu("iPhone") {
         Button("Save Screenshot…") { model.saveScreenshot() }.keyboardShortcut("s")
@@ -87,6 +92,7 @@ import SwiftUI
 
 struct MirrorWindow: View {
   @AppStorage("alwaysOnTop") private var alwaysOnTop = false
+  @AppStorage("showDeviceBezel") private var showDeviceBezel = true
   @ObservedObject var model: MirrorModel
   var body: some View {
     VStack(spacing: 0) {
@@ -140,7 +146,8 @@ struct MirrorWindow: View {
       ZStack {
         Color(red: 0.035, green: 0.04, blue: 0.045)
         if model.session != nil {
-          MirrorSurface(model: model).id(model.sessionID).opacity(model.hasPicture ? 1 : 0)
+          FramedMirror(model: model, showBezel: showDeviceBezel)
+            .id(model.sessionID).opacity(model.hasPicture ? 1 : 0)
         }
         if !model.hasPicture { connectionView }
         if let notice = model.screenshotNotice {

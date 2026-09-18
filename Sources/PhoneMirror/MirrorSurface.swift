@@ -6,11 +6,16 @@ import SwiftUI
 
 struct MirrorSurface: NSViewRepresentable {
   @ObservedObject var model: MirrorModel
+  var cornerRadius: CGFloat = 0
   func makeNSView(context: Context) -> MirrorView { MirrorView(model: model) }
-  func updateNSView(_ view: MirrorView, context: Context) { view.synchronize(model: model) }
+  func updateNSView(_ view: MirrorView, context: Context) {
+    view.cornerRadius = cornerRadius
+    view.synchronize(model: model)
+  }
 }
 
 final class MirrorView: MTKView, MTKViewDelegate {
+  var cornerRadius: CGFloat = 0
   weak var model: MirrorModel?
   private var ci: CIContext?
   private var commands: MTLCommandQueue?
@@ -148,12 +153,17 @@ final class MirrorView: MTKView, MTKViewDelegate {
       let aspect = presentation.size.width / presentation.size.height
       let longSide = max(self.bounds.width, self.bounds.height)
       var height = aspect > 1 ? longSide / aspect : longSide
+      let horizontalChrome = max(
+        0, (window.contentView?.bounds.width ?? self.bounds.width) - self.bounds.width)
       var width = height * aspect
-      let scale = min(1, (visible.width - 40) / width, (visible.height - 40 - chrome) / height)
+      let scale = min(
+        1, (visible.width - 40 - horizontalChrome) / width, (visible.height - 40 - chrome) / height)
       width *= scale
       height *= scale
       window.setContentSize(
-        CGSize(width: max(360, width), height: max(aspect > 1 ? 360 : 580, height + chrome)))
+        CGSize(
+          width: max(360, width + horizontalChrome),
+          height: max(aspect > 1 ? 360 : 580, height + chrome)))
     }
     fitWork = work
     // Give SwiftUI time to apply the landscape minimum window size first.
@@ -204,7 +214,11 @@ final class MirrorView: MTKView, MTKViewDelegate {
   override func mouseDown(with event: NSEvent) {
     synchronizeIfNeeded()
     let point = convert(event.locationInWindow, from: nil)
-    guard activeGeometry?.point(point) != nil else { return }
+    guard activeGeometry?.point(point) != nil,
+      cornerRadius == 0
+        || NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius).contains(
+          point)
+    else { return }
     window?.makeFirstResponder(self)
     endScroll()
     mouseHeld = true
@@ -264,7 +278,9 @@ final class MirrorView: MTKView, MTKViewDelegate {
     if ["q", "w", "h", "m"].contains(key) { return true }
     if flags == .command && ["v", "r", "0", "s"].contains(key) { return true }
     if flags == [.command, .shift] && ["a", "h", "d", "r", "c", "s"].contains(key) { return true }
-    if flags == [.command, .option] && (key == "t" || [123, 124].contains(event.keyCode)) {
+    if flags == [.command, .option]
+      && (["t", "b"].contains(key) || [123, 124].contains(event.keyCode))
+    {
       return true
     }
     return event.keyCode == 53  // Command–Escape releases all inputs.
