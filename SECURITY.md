@@ -5,6 +5,13 @@ services. It has no analytics service, background clipboard synchronization, or
 default screen/keystroke recording. Explicit paste replaces the iPhone clipboard.
 Device identity is discovered at runtime rather than embedded in the source.
 
+The Connection Diagnostics panel exports only allowlisted numeric counters,
+fixed event labels and validated numeric app/OS versions. Raw native errors and
+device identity are not part of that format. Reports contain no pixels, input or
+clipboard contents, remain in memory until explicitly copied/saved, and are never
+uploaded automatically. CLI diagnostics are separate; review their output before
+sharing it. The optional `--scroll-at` diagnostic sends an explicitly requested swipe.
+
 ## Reporting
 
 For vulnerabilities or accidental exposure of private information, use

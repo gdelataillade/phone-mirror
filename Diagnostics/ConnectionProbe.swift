@@ -5,6 +5,17 @@ import MirrorCore
 /// Exercises the actual app coordinator against a physical USB device without sending input.
 @main struct ConnectionProbe {
   @MainActor static func main() async {
+    if let index = CommandLine.arguments.firstIndex(of: "--seconds") {
+      guard CommandLine.arguments.indices.contains(index + 1),
+        let seconds = Double(CommandLine.arguments[index + 1]), seconds.isFinite,
+        (10...1800).contains(seconds)
+      else {
+        print("Use --seconds 10...1800 for a read-only stability run")
+        exit(2)
+      }
+      await soak(seconds: seconds)
+      return
+    }
     let manualReconnect = CommandLine.arguments.contains("--manual-reconnect")
     let simulateBackpressure = CommandLine.arguments.contains("--video-stall")
     var attempts = 0
@@ -101,6 +112,60 @@ import MirrorCore
     print(
       "Finished: automaticReconnect=\(secondLive != nil) stoppedRetries=\(passed) cleanedUp=\(model.session == nil)"
     )
+    print(model.diagnosticReport)
     exit(passed && secondLive != nil && model.session == nil ? 0 : 1)
+  }
+
+  @MainActor static func soak(seconds: Double) async {
+    let model = MirrorModel()
+    model.refresh()
+    let deadline = ProcessInfo.processInfo.systemUptime + 45
+    while model.discovering && ProcessInfo.processInfo.systemUptime < deadline {
+      try? await Task.sleep(for: .milliseconds(100))
+    }
+    guard !model.selection.isEmpty else {
+      print("No USB iPhone available")
+      exit(2)
+    }
+    model.connect()
+    let began = ProcessInfo.processInfo.systemUptime
+    var lastReport = began - 10
+    var sawPicture = false
+    var healthyAtEnd = false
+    var lastAttemptCount = 0
+    while ProcessInfo.processInfo.systemUptime - began < seconds {
+      model.updateVideoState()
+      let now = ProcessInfo.processInfo.systemUptime
+      sawPicture = sawPicture || model.hasPicture
+      healthyAtEnd = model.hasPicture
+      if model.diagnostics.attempts != lastAttemptCount {
+        if lastAttemptCount > 0 {
+          print(model.diagnostics.lastSession.report)
+          fflush(stdout)
+        }
+        lastAttemptCount = model.diagnostics.attempts
+      }
+      if now - lastReport >= 10 {
+        let health = model.diagnosticHealth
+        print(
+          "elapsed=\(Int(now - began))s phase=\(model.lifecycle.phase) attempts=\(model.diagnostics.attempts) decoded=\(health.decodedFrames) discontinuities=\(health.native.discontinuities) overflows=\(health.native.queueOverflows) orientationMax=\(health.native.orientationMaxMs)ms"
+        )
+        fflush(stdout)
+        lastReport = now
+      }
+      try? await Task.sleep(for: .milliseconds(100))
+    }
+    let health = model.diagnosticHealth
+    let uninterrupted =
+      sawPicture && healthyAtEnd && model.diagnostics.attempts == 1
+      && health.decoderErrors == 0 && health.native.queueOverflows == 0
+    model.disconnect()
+    let cleanup = ProcessInfo.processInfo.systemUptime + 20
+    while model.session != nil && ProcessInfo.processInfo.systemUptime < cleanup {
+      try? await Task.sleep(for: .milliseconds(100))
+    }
+    print(model.diagnosticReport)
+    print("Finished: uninterrupted=\(uninterrupted) cleanedUp=\(model.session == nil)")
+    exit(uninterrupted && model.session == nil ? 0 : 1)
   }
 }

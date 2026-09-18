@@ -16,11 +16,13 @@ use idevice::{
 use std::{
     collections::BTreeSet,
     ffi::{CStr, CString, c_char},
-    sync::{Mutex, mpsc},
+    sync::{Arc, Mutex, mpsc},
     thread,
     time::Duration,
 };
 use tokio::sync::{mpsc as async_mpsc, watch};
+mod health;
+mod orientation;
 mod presence;
 pub use presence::*;
 
@@ -94,6 +96,7 @@ impl PMEvent {
     }
 }
 pub struct PMHandle {
+    health: health::SharedHealth,
     events: Mutex<mpsc::Receiver<PMEvent>>,
     commands: async_mpsc::Sender<Command>,
     cancel: watch::Sender<bool>,
@@ -135,9 +138,11 @@ pub unsafe extern "C" fn pm_start(udid: *const c_char) -> *mut PMHandle {
     let (tx, rx) = mpsc::sync_channel(16);
     let (command_tx, command_rx) = async_mpsc::channel(64);
     let (cancel_tx, cancel_rx) = watch::channel(false);
+    let health = Arc::new(Mutex::new(health::Health::default()));
+    let worker_health = health.clone();
     let worker = thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            runtime()?.block_on(run(&udid, &tx, command_rx, cancel_rx))
+            runtime()?.block_on(run(&udid, &tx, command_rx, cancel_rx, &worker_health))
         }))
         .unwrap_or_else(|_| {
             Err("The native session stopped unexpectedly. Reconnect to try again.".into())
@@ -149,11 +154,23 @@ pub unsafe extern "C" fn pm_start(udid: *const c_char) -> *mut PMHandle {
         let _ = tx.send(PMEvent::message(4, "Disconnected"));
     });
     Box::into_raw(Box::new(PMHandle {
+        health,
         events: Mutex::new(rx),
         commands: command_tx,
         cancel: cancel_tx,
         worker: Some(worker),
     }))
+}
+/// Numeric telemetry only; free the returned JSON using pm_string_free.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pm_health(handle: *mut PMHandle) -> *mut c_char {
+    let Some(h) = (unsafe { handle.as_ref() }) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(health) = h.health.lock() else {
+        return std::ptr::null_mut();
+    };
+    CString::new(health.json()).unwrap_or_default().into_raw()
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pm_poll(handle: *mut PMHandle, timeout_ms: u32) -> *mut PMEvent {
@@ -266,7 +283,9 @@ async fn run(
     tx: &mpsc::SyncSender<PMEvent>,
     commands: async_mpsc::Receiver<Command>,
     mut cancel: watch::Receiver<bool>,
+    health: &health::SharedHealth,
 ) -> Result<()> {
+    health::stage(health, 1);
     status(tx, "Opening USB connection…");
     let connection = async {
         let mut mux = bounded("USB connection", UsbmuxdConnection::default()).await?;
@@ -277,6 +296,7 @@ async fn run(
             .ok_or("Connect this iPhone by USB and unlock it.")?;
         let provider = device.to_provider(UsbmuxdAddr::default(), "PhoneMirror");
         status(tx, "Opening developer services…");
+        health::stage(health, 2);
         let proxy = bounded(
             "Developer services (prepare the device in Xcode first)",
             CoreDeviceProxy::connect(&provider),
@@ -287,6 +307,7 @@ async fn run(
             .create_software_tunnel()
             .map_err(|e| format!("USB tunnel: {e}"))?
             .to_async_handle();
+        health::stage(health, 3);
         let stream = bounded("Remote service discovery", adapter.connect(port)).await?;
         let mut rsd = bounded("Remote services", RsdHandshake::new(stream)).await?;
         let display = bounded(
@@ -308,6 +329,7 @@ async fn run(
         tx,
         commands,
         cancel.clone(),
+        health,
     )
     .await;
     // Cleanup even when setup was cancelled after the audio half started.
@@ -341,6 +363,7 @@ async fn stream(
     tx: &mpsc::SyncSender<PMEvent>,
     commands: async_mpsc::Receiver<Command>,
     cancel: watch::Receiver<bool>,
+    health: &health::SharedHealth,
 ) -> Result<()> {
     // Cancellation may drop setup safely: no input task exists until this completes.
     // Keep this select outside the media loop so held inputs still get explicit cleanup.
@@ -361,6 +384,7 @@ async fn stream(
             audio_device_uid: None,
         };
         status(tx, "Opening touch and keyboard…");
+        health::stage(health, 4);
         let mut hid = bounded(
             "Touch service",
             UniversalHidServiceClient::connect_rsd(adapter, rsd),
@@ -405,6 +429,7 @@ async fn stream(
         .await
         .ok();
         status(tx, "Starting screen sharing…");
+        health::stage(health, 5);
         let audio_offer = build_screen_audio_offer(&uuid::Uuid::new_v4().to_string(), &info)
             .map_err(|e| e.to_string())?;
         bounded(
@@ -466,7 +491,7 @@ async fn stream(
         indigo,
         pasteboard,
         touch_id,
-        mut orientation,
+        orientation,
         rotation,
     ) = tokio::select! {
         biased;
@@ -476,6 +501,12 @@ async fn stream(
     status(tx, "Connected · waiting for picture");
     let mut cancel_media = cancel.clone();
     let (input_stop_tx, input_stop_rx) = watch::channel(false);
+    let (orientation_tx, orientation_rx) = watch::channel(orientation::Observation::initial());
+    let orientation_worker = tokio::spawn(orientation::run(
+        orientation,
+        orientation_tx,
+        input_stop_rx.clone(),
+    ));
     let (refresh_tx, mut refresh_rx) = async_mpsc::channel(1);
     let input = tokio::spawn(input_loop(
         hid,
@@ -492,6 +523,11 @@ async fn stream(
     let mut timer = tokio::time::interval(Duration::from_millis(50));
     timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let started = tokio::time::Instant::now();
+    let mut metrics = health::Health {
+        stage: 6,
+        ..Default::default()
+    };
+    let mut last_packet: Option<tokio::time::Instant> = None;
     let mut received = false;
     let mut frames = 0u16;
     let mut first_seq: Option<u16> = None;
@@ -500,8 +536,7 @@ async fn stream(
     let mut last_refresh = started - Duration::from_secs(1);
     let mut request_refresh = false;
     let mut config_revision = 0;
-    let mut current_orientation = 0;
-    let mut orientation_checked = started;
+    let mut config_changed = started;
     let mut last_frame = started;
     // The offer names the device feedback port; the RTP source port is different.
     let remote_video_port = 50001;
@@ -510,22 +545,29 @@ async fn stream(
         tokio::select! {
             _ = cancelled(&mut cancel_media) => break Ok(()),
             _ = timer.tick() => {
+                let observation = *orientation_rx.borrow();
+                metrics.orientation_queries = observation.queries;
+                metrics.orientation_max_ms = observation.max_ms;
+                metrics.orientation_failures = u64::from(observation.failed);
+                metrics.last_packet_age_ms = last_packet.map(|time| time.elapsed().as_millis() as u64);
+                metrics.publish(health);
+                if observation.failed {break Err("Display orientation stopped responding. Reconnecting to restore safe controls.".into());}
                 if input.is_finished() {break Err("The input connection closed. Reconnect to continue.".into());}
-                if received && last_frame.elapsed()>Duration::from_secs(8) {break Err("The picture stopped updating. Unlock your iPhone and reconnect.".into());}
-                if last_frame.elapsed()>Duration::from_secs(2) {request_refresh=true;}
+                // A static screen can legitimately send no RTP for several seconds.
+                // Orientation responses provide liveness; only time out stalled
+                // assembly when packets still arrive or integrity was lost.
+                let stalled = last_packet.is_some_and(|time| time.elapsed()<Duration::from_secs(1))
+                    || metrics.queue_overflows>0 || metrics.discontinuities>0;
+                if received && stalled && last_frame.elapsed()>Duration::from_secs(8) {break Err("The video pipeline stopped producing complete pictures. Reconnecting.".into());}
+                if stalled && last_frame.elapsed()>Duration::from_secs(2) {request_refresh=true;}
                 if !received && started.elapsed()>Duration::from_secs(20) {break Err("No complete video frame arrived. Unlock the phone, prepare it in Xcode, then reconnect.".into());}
                 if first_seq.is_some() {
-                    if let Err(e)=video.send_to(remote_video_port,build_rctl(our_ssrc,started.elapsed().as_millis() as u16,frames,relative_seq)).await {break Err(format!("Video feedback: {e}"));}
+                    if let Err(error)=send_feedback(video.send_to(remote_video_port,build_rctl(our_ssrc,started.elapsed().as_millis() as u16,frames,relative_seq)), &mut metrics).await {break Err(error);}
                 }
                 if request_refresh && last_refresh.elapsed()>=Duration::from_millis(500) {
-                    let _=video.send_to(remote_video_port,build_keyframe_request(our_ssrc,&call_id,negotiated.ssrc,&[],fir)).await;
+                    metrics.refresh_requests += 1;
+                    if let Err(error)=send_feedback(video.send_to(remote_video_port,build_keyframe_request(our_ssrc,&call_id,negotiated.ssrc,&[],fir)), &mut metrics).await {break Err(error);}
                     fir=fir.wrapping_add(1);last_refresh=tokio::time::Instant::now();request_refresh=false;
-                }
-                if orientation_checked.elapsed()>=Duration::from_millis(500) {
-                    current_orientation=match read_orientation(&mut orientation).await {
-                        Ok(value)=>value,Err(error)=>break Err(error),
-                    };
-                    orientation_checked=tokio::time::Instant::now();
                 }
             }
             Some(_) = refresh_rx.recv() => {assembler.mark_stream_discontinuity();request_refresh=true;}
@@ -535,6 +577,10 @@ async fn stream(
                 if is_rtcp(&packet.data) {continue;}
                 let Some(rtp)=RtpPacket::parse(&packet.data) else {continue;};
                 if rtp.payload_type!=negotiated.payload_type || rtp.ssrc!=negotiated.ssrc {continue;}
+                let packet_time = tokio::time::Instant::now();
+                metrics.video_packets += 1;
+                if let Some(last) = last_packet { metrics.max_packet_gap_ms = metrics.max_packet_gap_ms.max(packet_time.duration_since(last).as_millis() as u64); }
+                last_packet = Some(packet_time);
                 if first_seq.is_none() && trace {eprintln!("video sender port: {}",packet.source_port);}
 
                 let base=*first_seq.get_or_insert(rtp.sequence_number);
@@ -543,26 +589,25 @@ async fn stream(
                 for event in assembler.push_packet(&rtp) {
                     match event {
                         HevcDepacketizerEvent::AccessUnit(unit) => {
+                            metrics.assembled_frames += 1;
                             frames=frames.wrapping_add(1);
-                            let _=video.send_to(remote_video_port,build_frame_ack(our_ssrc,unit.rtp_timestamp)).await;
+                            if let Err(error)=send_feedback(video.send_to(remote_video_port,build_frame_ack(our_ssrc,unit.rtp_timestamp)), &mut metrics).await {break 'media Err(error);}
                             if let Some(config)=assembler.parameter_sets() {
                                 if config.revision != config_revision {
-                                    current_orientation=match read_orientation(&mut orientation).await {
-                                        Ok(value)=>value,Err(error)=>break 'media Err(error),
-                                    };
-                                    orientation_checked=tokio::time::Instant::now();
+                                    config_changed=tokio::time::Instant::now();
                                     config_revision=config.revision;
                                 }
+                                let current_orientation=orientation_rx.borrow().value_for(config_changed, tokio::time::Instant::now());
                                 let event=PMEvent {kind:2,values:[config.pixel_width,config.pixel_height,u32::from(unit.is_sync),unit.rtp_timestamp,current_orientation],
                                     parts:[unit.bytes,config.video_parameter_set,config.sequence_parameter_set,config.picture_parameter_set]};
                                 match tx.try_send(event) {
-                                    Ok(())=>{received=true;last_frame=tokio::time::Instant::now();},
-                                    Err(mpsc::TrySendError::Full(_))=>{if trace {eprintln!("encoded queue full; requesting intra refresh");}assembler.mark_stream_discontinuity();request_refresh=true;break;},
-                                    Err(mpsc::TrySendError::Disconnected(_))=>{break;},
+                                    Ok(())=>{metrics.queued_frames+=1;received=true;last_frame=tokio::time::Instant::now();},
+                                    Err(mpsc::TrySendError::Full(_))=>{metrics.queue_overflows+=1;if trace {eprintln!("encoded queue full; requesting intra refresh");}assembler.mark_stream_discontinuity();request_refresh=true;break;},
+                                    Err(mpsc::TrySendError::Disconnected(_))=>{break 'media Ok(());},
                                 }
                             }
                         }
-                        HevcDepacketizerEvent::Discontinuity(reason)=>{if trace {eprintln!("HEVC discontinuity: {reason:?}");}request_refresh=true;},
+                        HevcDepacketizerEvent::Discontinuity(reason)=>{metrics.discontinuities+=1;if trace {eprintln!("HEVC discontinuity: {reason:?}");}request_refresh=true;},
                         _=>{},
                     }
                 }
@@ -570,16 +615,46 @@ async fn stream(
         }
     };
     let _ = input_stop_tx.send(true);
+    let _ = orientation_worker.await;
+    metrics.publish(health);
     let _ = input.await; // Held inputs are released before stopping the owned media session.
     result
+}
+
+async fn send_feedback(
+    send: impl std::future::Future<Output = std::io::Result<()>>,
+    health: &mut health::Health,
+) -> Result<()> {
+    // The adapter response can otherwise wait indefinitely and prevent cleanup.
+    match tokio::time::timeout(Duration::from_millis(250), send).await {
+        Ok(Ok(())) => Ok(()),
+        _ => {
+            health.feedback_failures += 1;
+            Err("The USB video feedback path stopped responding. Reconnecting.".into())
+        }
+    }
+}
+
+#[cfg(test)]
+#[tokio::test(start_paused = true)]
+async fn stuck_feedback_is_bounded_so_the_session_can_close() {
+    let mut health = health::Health::default();
+    let began = tokio::time::Instant::now();
+    assert!(
+        send_feedback(std::future::pending(), &mut health)
+            .await
+            .is_err()
+    );
+    assert_eq!(health.feedback_failures, 1);
+    assert_eq!(began.elapsed(), Duration::from_millis(250));
 }
 
 async fn read_orientation(
     client: &mut OrientationServiceClient<Box<dyn ReadWrite>>,
 ) -> Result<u32> {
-    let state = tokio::time::timeout(Duration::from_millis(750), client.current_orientation())
+    let state = client
+        .current_orientation()
         .await
-        .map_err(|_| "Display orientation stopped responding. Reconnect the iPhone.".to_string())?
         .map_err(|_| "Could not read display orientation. Reconnect the iPhone.".to_string())?;
     if std::env::var_os("PM_TRACE_ORIENTATION").is_some() {
         eprintln!(
@@ -588,6 +663,12 @@ async fn read_orientation(
         );
     }
     Ok(orientation_value(&state))
+}
+
+impl orientation::Source for OrientationServiceClient<Box<dyn ReadWrite>> {
+    async fn read(&mut self) -> Result<u32> {
+        read_orientation(self).await
+    }
 }
 
 fn orientation_value(state: &OrientationState) -> u32 {

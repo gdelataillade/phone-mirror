@@ -2,6 +2,58 @@
 
 18 September 2026 — personal preview with input and remote rotation controls.
 
+## Reliability and connection diagnostics
+
+The previous watchdog treated every one-second gap in decoded pictures as a
+failure. On the physical test phone, a static screen repeatedly stopped producing
+video after roughly 418 frames while orientation queries still succeeded. The
+coordinator consequently reconnected despite zero decoder errors, skipped outputs,
+queue overflows or stream discontinuities. A raw receive/decode experiment with
+one explicitly requested Settings scroll resumed on the same connection after a
+**3.844-second output gap**, decoded 1,164 frames in 30 seconds, and reported no
+decoder errors, skips, overflows or discontinuities. This establishes a false
+reconnect condition; it does not explain every earlier interruption.
+
+- The watchdog now accepts idle video only with newly completed device queries,
+  matching assembled/queued/decoded counters, and no recorded stream, feedback or
+  decoder failure. Repeated cached telemetry cannot extend this deadline. Startup
+  timeout, fast USB-loss detection and the 1/2/4/8/16/30-second retry schedule remain.
+- Orientation queries run separately from media reception and feedback. A codec
+  change disables picture input until an orientation query begun after that change
+  completes. Timeout/cancellation drops the service connection rather than reusing
+  a possibly late reply. Feedback calls time out instead of indefinitely blocking
+  session cleanup.
+- **Connection Diagnostics** is available from the iPhone menu and connection
+  screen. Copy/save exports retain numeric counters and recent fixed-label events
+  across reconnects. No device identity, raw errors, media, clipboard or input is
+  included. The report has been opened and saved through the actual macOS UI.
+- **79 automated tests pass: 41 Rust and 38 Swift.** Added checks cover idle video
+  with fresh versus cached liveness, pipeline errors and pending frames, missing
+  first pictures, delayed orientation, cancellation, feedback timeout, bounded
+  report history, and exclusion of free-form identity from version fields.
+- The production build and ad-hoc signature verification pass. A source-only
+  Gitleaks scan and a scan of the UI-exported report found no leaks.
+- A **600-second run of the actual coordinator and decoder** completed on one
+  connection: **12,164 decoded frames**, zero decoder errors/skipped outputs,
+  zero queue overflows/discontinuities/feedback failures, and 1,200 successful
+  orientation queries. The maximum interval between decoded outputs was
+  **54.977 seconds** during idle video; new pictures resumed without reconnection.
+  The session closed cleanly. This diagnostic does not exercise Metal rendering
+  and is not a substitute for multi-device or physical sleep/wake validation.
+- The forced one-second decoder-backlog check still passed: the queue overflow
+  was recorded, the coordinator closed the unhealthy session around elapsed 5s,
+  and a new connection restored decoded video around 6s. Stop during the next
+  backoff kept the coordinator idle for twelve seconds; all native work closed.
+- In the actual Mac window, Settings remained connected at zero FPS, scrolling
+  from the Mac resumed live video, and manual reconnect restored the picture.
+  The live diagnostics panel showed two attempts (initial plus manual) and kept
+  the previous session's counters. The updated app was left connected.
+
+Liveness establishes that the device control path responds; it is not an independent
+pixel comparison. A silent encoder-only failure without an integrity signal may
+still require **Reconnect now**. This prototype continues to require an unlocked
+iPhone. Physical cable and sleep/wake checks remain separate from injected failures.
+
 ## Public source preparation
 
 The publication build and signature verification passed. **69 tests pass**:
@@ -174,9 +226,10 @@ intent but suppresses attempts; wake resumes once the old worker has closed.
 Each attempt owns a fresh decoder, bounded input queue and input view. Old native
 callbacks cannot update a new attempt, and queued commands are not carried over.
 
-The decoded-video watchdog restarts after one second without fresh output, or
-25 seconds if a session never produces a picture. Clearing the decoder mailbox
-during an error does not reset this deadline. Controls require a current picture.
+The decoded-video watchdog restarts after one second without usable output or
+verified idle liveness, or 25 seconds if a session never produces a picture.
+Clearing the decoder mailbox does not reset this deadline. Controls require a
+picture backed by fresh output or healthy idle liveness.
 A decoder reset waits for a sync frame before accepting predicted pictures.
 
 **Keyframe-only recovery is still unreliable on this phone.** The raw diagnostic
@@ -214,11 +267,16 @@ Open `build/PhoneMirror.app`, connect by USB, unlock the iPhone and choose
    remains held. Device-side release is best effort if transport is already gone.
 6. **Long run:** mirror for 30 minutes, including scrolling, animation and a static
    screen. Watch for corruption, stalls, reconnect loops or increasing memory.
+7. **Idle display:** leave Settings untouched for at least 30 seconds. Zero FPS
+   can be normal on a static screen; the connection should stay open. Then scroll
+   from the Mac and verify that fresh pictures resume. Open Connection Diagnostics
+   and check that this did not introduce another connection attempt.
 
 Paste, Home, App Switcher, held-input edge cases and longer sessions still need
 comprehensive on-device QA. Passing checks on one phone do not establish general
 control accuracy across other devices and apps.
-Audio, Wi-Fi, notifications, notarization and public distribution remain out of scope.
+Audio, Wi-Fi, notifications and notarized binary distribution remain unsupported.
+The source repository is public.
 
 ## Earlier baseline, 16 September
 
@@ -228,3 +286,68 @@ stalled after nine decoded frames with zero decoder errors. Moving control setup
 before media, bounded queues, keyframe feedback and decoder work were implemented
 then; the phone became unavailable before those changes could be tested. The
 results above replace that earlier unverified recovery status.
+
+## Screenshot capture, 18 September
+
+- Full test suite: 82 passing (41 Rust, 41 Swift). New PNG tests decode exported
+  pixels to check all four orientations, already-oriented landscape, unknown
+  orientation rejection and clean-aperture cropping.
+- Release build and ad-hoc signature verification pass. No new Swift warnings.
+- Live iPhone: Command–S and Shift–Command–C worked with the mirrored screen
+  focused. Saved and clipboard PNGs were 1216 × 2656. The saved Settings image
+  was visually inspected: no Mac window, toolbar or window letterboxing.
+- Camera button opened Save; Cancel returned to mirroring and re-enabled capture.
+- Test images remain outside the repository. No screenshot was published.
+- Live landscape screenshots and protected-content behavior remain unverified.
+  To check landscape, open a harmless Safari page, rotate using PhoneMirror,
+  save a screenshot and verify its orientation in Preview. Return to portrait
+  and repeat. Copy with Shift–Command–C, then use Preview → File → New from
+  Clipboard to verify pasting. Captures use stream resolution, not a separate
+  full-resolution device screenshot service.
+
+## Screen recording, 18 September
+
+- 85 automated tests pass (41 Rust, 44 Swift). Movie tests read exported H.264
+  files, check video-only tracks, preserve two seconds of idle duration, decode
+  a landscape image fitted to a portrait canvas and reject an empty recording.
+- Live Start/Stop through Shift–Command–S produced a 15.16-second 1216 × 2656
+  movie at 29.93 fps. Sampled frames were decoded and the first was visually
+  inspected; a full FFmpeg decode completed without errors.
+- Clicking Disconnect during recording finalized a second playable 13.03-second
+  movie. Recording did not resume after reconnecting.
+- Normal Quit during a static-screen recording finalized a 34.17-second H.264
+  movie and exited the process. The updated app was reopened afterward.
+- The recording UI showed a red Stop control and elapsed timer. Test media remains
+  outside the repository and has not been published.
+- The current writer uses AVFoundation compatibility APIs deprecated in macOS 27;
+  the build succeeds with deprecation warnings. Migration to input receivers is
+  future maintenance, not evidence of additional device validation.
+- Manual QA still needed: start on a harmless Safari page, rotate both directions,
+  stop and play the complete clip in QuickTime. Repeat with a brief USB unplug and
+  Mac sleep. Confirm the saved clip stops at interruption and recording stays off
+  after reconnect. Long recordings, disk-full paths and protected media remain
+  unverified. Movies are silent; crash recovery is not included.
+
+## Always on Top, 18 September
+
+- Release build, signature verification and diff whitespace checks pass.
+- Live header pin and Option–Command–T switch the mirror's actual window level
+  between floating (3) and normal (0). Read-only window-order inspection while
+  another app was foreground showed PhoneMirror above Finder when pinned and
+  below Finder after unpinning.
+- Enabled preference survived Quit and relaunch. Shortcut also worked with the
+  mirrored iPhone focused. Screenshot Save remained accessible while pinned;
+  Cancel returned to the connected mirror. App left pinned and connected.
+- No new unit tests were added for this small AppKit preference; validation was
+  performed in the built app. Other Spaces and full-screen apps were not tested.
+- To reproduce: click the header pin, activate another ordinary window on the
+  same desktop, then toggle off with Option–Command–T and activate that window
+  again. Restart PhoneMirror to check preference persistence.
+
+## App icon, 18 September
+
+- Integrated the supplied square PNG without changing its artwork.
+- Release build generates the ten standard iconset representations, including
+  1024 × 1024, and packages AppIcon.icns via CFBundleIconFile.
+- Verified plist syntax, decoded the resulting icns with iconutil, checked its
+  largest representation, and verified the app signature. Restarted the app.

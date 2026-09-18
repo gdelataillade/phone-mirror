@@ -1,7 +1,7 @@
 import CMirror
 import Foundation
 
-// Explicit, local device diagnostic. Does not send input or save screen contents.
+// Local diagnostic; no screen contents are saved. Input requires explicit --scroll-at.
 func argument(_ key: String, default fallback: Double) -> Double {
   guard let index = CommandLine.arguments.firstIndex(of: key),
     CommandLine.arguments.indices.contains(index + 1),
@@ -12,6 +12,10 @@ func argument(_ key: String, default fallback: Double) -> Double {
 let duration = min(1800, max(10, argument("--seconds", default: 30)))
 let pauseAt = argument("--pause-at", default: .infinity)
 let pauseFor = min(3, argument("--pause-for", default: 1))
+let scrollAt = argument("--scroll-at", default: .infinity)
+var scrolled = false
+var scrollStep: UInt32?
+var lastScrollStep = 0.0
 guard let listText = pm_devices() else {
   print("USB discovery failed")
   exit(2)
@@ -39,6 +43,23 @@ var pauseEnded = 0.0
 var maxGap = 0.0
 while ProcessInfo.processInfo.systemUptime - began < duration {
   let now = ProcessInfo.processInfo.systemUptime
+  if !scrolled && now - began >= scrollAt {
+    print("Sending the explicitly requested test scroll")
+    _ = pm_command(session, 1, 32767, 50000)
+    scrollStep = 0
+    lastScrollStep = now
+    scrolled = true
+  }
+  if let step = scrollStep, now - lastScrollStep >= 0.02 {
+    if step < 15 {
+      _ = pm_command(session, 1, 32767, 50000 - (step + 1) * 2000)
+      scrollStep = step + 1
+    } else {
+      _ = pm_command(session, 2, 0, 0)
+      scrollStep = nil
+    }
+    lastScrollStep = now
+  }
   if !paused && now - began >= pauseAt {
     print("Pausing encoded consumer for \(pauseFor)s")
     fflush(stdout)
@@ -95,6 +116,10 @@ while ProcessInfo.processInfo.systemUptime - began < duration {
     lastReport = now
   }
   if kind == 4 { break }
+}
+if let health = pm_health(session) {
+  print("Native health:", String(cString: health))
+  pm_string_free(health)
 }
 pm_close(session)
 decoder.stop()

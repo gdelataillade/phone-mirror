@@ -116,19 +116,8 @@ final class MirrorView: MTKView, MTKViewDelegate {
       geometryChangedAt = ProcessInfo.processInfo.systemUptime
     }
     let rect = MirrorGeometry.contentRect(view: drawableSize, screen: screen)
-    var image = CIImage(cvPixelBuffer: frame.pixelBuffer)
-    // Use the SPS conformance dimensions; do not stretch encoder padding into the view.
-    let clean = CVImageBufferGetCleanRect(frame.pixelBuffer)
-    if clean.width > 0 && clean.height > 0 {
-      image = image.cropped(to: clean).transformed(
-        by: CGAffineTransform(translationX: -clean.minX, y: -clean.minY))
-    }
-    switch presentation?.clockwiseQuarterTurns {
-    case 1: image = image.oriented(.right)
-    case 2: image = image.oriented(.down)
-    case 3: image = image.oriented(.left)
-    default: break
-    }
+    var image = FrameImage.oriented(
+      pixelBuffer: frame.pixelBuffer, quarterTurns: presentation?.clockwiseQuarterTurns ?? 0)
     let scale = min(rect.width / image.extent.width, rect.height / image.extent.height)
     image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale)).transformed(
       by: CGAffineTransform(translationX: rect.minX, y: rect.minY))
@@ -273,9 +262,11 @@ final class MirrorView: MTKView, MTKViewDelegate {
     guard flags.contains(.command) else { return false }
     let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
     if ["q", "w", "h", "m"].contains(key) { return true }
-    if flags == .command && ["v", "r", "0"].contains(key) { return true }
-    if flags == [.command, .shift] && ["a", "h", "d", "r"].contains(key) { return true }
-    if flags == [.command, .option] && [123, 124].contains(event.keyCode) { return true }
+    if flags == .command && ["v", "r", "0", "s"].contains(key) { return true }
+    if flags == [.command, .shift] && ["a", "h", "d", "r", "c", "s"].contains(key) { return true }
+    if flags == [.command, .option] && (key == "t" || [123, 124].contains(event.keyCode)) {
+      return true
+    }
     return event.keyCode == 53  // Command–Escape releases all inputs.
   }
   override func performKeyEquivalent(with event: NSEvent) -> Bool {

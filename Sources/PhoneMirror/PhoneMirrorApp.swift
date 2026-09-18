@@ -4,6 +4,7 @@ import SwiftUI
 @main struct PhoneMirrorApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
   @StateObject private var model = MirrorModel()
+  @AppStorage("alwaysOnTop") private var alwaysOnTop = false
   var body: some Scene {
     Window("PhoneMirror", id: "mirror") {
       MirrorWindow(model: model)
@@ -23,7 +24,18 @@ import SwiftUI
         Button("Paste Text to iPhone") { model.pasteText() }.keyboardShortcut("v").disabled(
           !model.canControl)
       }
+      CommandGroup(after: .windowArrangement) {
+        Toggle("Always on Top", isOn: $alwaysOnTop)
+          .keyboardShortcut("t", modifiers: [.command, .option])
+      }
       CommandMenu("iPhone") {
+        Button("Save Screenshot…") { model.saveScreenshot() }.keyboardShortcut("s")
+          .disabled(!model.canCaptureScreenshot)
+        Button("Copy Screenshot") { model.copyScreenshot() }
+          .keyboardShortcut("c", modifiers: [.command, .shift]).disabled(
+            !model.canCaptureScreenshot)
+        RecordingCommands(model: model, recorder: model.recording)
+        Divider()
         Button("Home") { model.home() }.keyboardShortcut("h", modifiers: [.command, .shift])
           .disabled(!model.canControl)
         Button("App Switcher") { model.appSwitcher() }.keyboardShortcut(
@@ -46,6 +58,8 @@ import SwiftUI
         Button("Disconnect") { model.disconnect() }.keyboardShortcut(
           "d", modifiers: [.command, .shift]
         ).disabled(!model.active)
+        Divider()
+        Button("Connection Diagnostics…") { model.showingDiagnostics = true }
       }
     }
   }
@@ -56,17 +70,23 @@ import SwiftUI
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     guard let model else { return .terminateNow }
-    guard model.session != nil else {
-      model.disconnect()
-      return .terminateNow
+    DispatchQueue.main.async {
+      model.recording.stop {
+        guard model.session != nil else {
+          model.disconnect()
+          sender.reply(toApplicationShouldTerminate: true)
+          return
+        }
+        model.onSessionClosed = { sender.reply(toApplicationShouldTerminate: true) }
+        model.disconnect()
+      }
     }
-    model.onSessionClosed = { sender.reply(toApplicationShouldTerminate: true) }
-    model.disconnect()
     return .terminateLater
   }
 }
 
 struct MirrorWindow: View {
+  @AppStorage("alwaysOnTop") private var alwaysOnTop = false
   @ObservedObject var model: MirrorModel
   var body: some View {
     VStack(spacing: 0) {
@@ -80,6 +100,16 @@ struct MirrorWindow: View {
           .font(.system(size: 11)).foregroundStyle(.secondary)
         }
         Spacer()
+        Button {
+          alwaysOnTop.toggle()
+        } label: {
+          Image(systemName: alwaysOnTop ? "pin.fill" : "pin")
+            .foregroundStyle(alwaysOnTop ? Color.accentColor : Color.secondary)
+        }
+        .buttonStyle(.plain)
+        .help(alwaysOnTop ? "Turn off Always on Top ⌥⌘T" : "Always on Top ⌥⌘T")
+        .accessibilityLabel("Always on Top")
+        .accessibilityValue(alwaysOnTop ? "On" : "Off")
         if model.active {
           Button {
             model.reconnectNow()
@@ -113,6 +143,13 @@ struct MirrorWindow: View {
           MirrorSurface(model: model).id(model.sessionID).opacity(model.hasPicture ? 1 : 0)
         }
         if !model.hasPicture { connectionView }
+        if let notice = model.screenshotNotice {
+          VStack {
+            Text(notice).font(.callout).padding(10)
+              .background(.regularMaterial, in: Capsule()).padding(.top, 12)
+            Spacer()
+          }.allowsHitTesting(false)
+        }
       }
       Divider()
       HStack(spacing: 7) {
@@ -120,9 +157,16 @@ struct MirrorWindow: View {
           width: 6, height: 6)
         Text(model.status).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
         Spacer(minLength: 4)
+        RecordingButton(model: model, recorder: model.recording)
         if model.hasPicture {
           Text("\(model.fps) fps").font(.system(size: 10, design: .monospaced)).foregroundStyle(
             .tertiary)
+          Button {
+            model.saveScreenshot()
+          } label: {
+            Image(systemName: "camera")
+          }.buttonStyle(.borderless).help("Save screenshot ⌘S · Copy screenshot ⇧⌘C")
+            .accessibilityLabel("Save screenshot").disabled(!model.canCaptureScreenshot)
           Button {
             model.rotate()
           } label: {
@@ -142,6 +186,19 @@ struct MirrorWindow: View {
         }
       }.padding(.horizontal, 16).frame(height: 40)
     }.background(.regularMaterial)
+      .background(MirrorWindowLevel(alwaysOnTop: alwaysOnTop).allowsHitTesting(false))
+      .alert(
+        "Could not capture screenshot",
+        isPresented: Binding(
+          get: { model.screenshotError != nil },
+          set: { if !$0 { model.screenshotError = nil } }
+        )
+      ) {
+        Button("OK", role: .cancel) { model.screenshotError = nil }
+      } message: {
+        Text(model.screenshotError ?? "")
+      }
+      .sheet(isPresented: $model.showingDiagnostics) { ConnectionDiagnosticsView(model: model) }
       .alert(
         "iPhone rotation",
         isPresented: Binding(
@@ -195,6 +252,9 @@ struct MirrorWindow: View {
         ).padding(.top, 24)
       }
       Spacer()
+      Button("Connection diagnostics…") { model.showingDiagnostics = true }
+        .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.white.opacity(0.65))
+        .padding(.bottom, 14)
       VStack(spacing: 5) {
         Text("USB FIRST · PERSONAL PREVIEW").font(
           .system(size: 9, weight: .semibold, design: .monospaced)

@@ -13,6 +13,8 @@ void pm_presence_close(PMPresence *handle);
 char *pm_devices(void);
 void pm_string_free(char *text);
 PMHandle *pm_start(const char *udid);
+// Numeric-only telemetry JSON; free with pm_string_free. No identity or payloads.
+char *pm_health(PMHandle *handle);
 // One consumer only. Events own their bytes until pm_event_free. No callbacks.
 PMEvent *pm_poll(PMHandle *handle, uint32_t timeout_ms);
 uint32_t pm_event_kind(const PMEvent *event); // 1 status, 2 frame, 3 error, 4 stopped, 5 rotation acknowledged (JSON), 6 rotation error

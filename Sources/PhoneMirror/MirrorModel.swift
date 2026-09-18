@@ -3,6 +3,7 @@ import MirrorCore
 import SwiftUI
 
 @MainActor final class MirrorModel: ObservableObject {
+  let recording = RecordingController()
   @Published var devices: [PhoneDevice] = []
   @Published var selection = ""
   @Published var discovering = false
@@ -17,6 +18,12 @@ import SwiftUI
   @Published private(set) var isLandscape = false
   @Published private(set) var rotation = RotationRequest()
   @Published var rotationNotice: String?
+  @Published var showingDiagnostics = false
+  @Published var screenshotBusy = false
+  @Published var screenshotNotice: String?
+  @Published var screenshotError: String?
+  private(set) var diagnostics = ConnectionDiagnostics(
+    started: ProcessInfo.processInfo.systemUptime)
   private var rotationLocked = false
   private(set) var session: NativeSession?
   private var timer: Timer?
@@ -30,6 +37,19 @@ import SwiftUI
   var onSessionClosed: (() -> Void)?
   private var observers: [NSObjectProtocol] = []
   var selected: PhoneDevice? { devices.first { $0.id == selection } }
+  var diagnosticHealth: SessionHealth { session?.healthSnapshot() ?? diagnostics.lastSession }
+  var diagnosticReport: String {
+    let os = ProcessInfo.processInfo.operatingSystemVersion
+    return diagnostics.report(
+      current: session?.healthSnapshot(), phase: lifecycle.phase,
+      appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        ?? "0.1.0",
+      macOSVersion: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
+      iOSVersion: selected?.version ?? "")
+  }
+  private func record(_ event: ConnectionDiagnostics.Event, health: SessionHealth? = nil) {
+    diagnostics.record(event, now: ProcessInfo.processInfo.systemUptime, health: health)
+  }
   var sessionID: UUID? { lifecycle.attempt?.id }
   var active: Bool { lifecycle.active }
   var closing: Bool { lifecycle.phase == .closing }
@@ -37,10 +57,10 @@ import SwiftUI
   var connected: Bool { lifecycle.phase == .live }
   var canReconnect: Bool { lifecycle.desiredDevice != nil && lifecycle.phase != .sleeping }
   var canControl: Bool {
-    guard connected, hasPicture, !rotation.isPending, let frame = session?.mailbox.latest() else {
+    guard connected, hasPicture, !rotation.isPending, session?.mailbox.latest() != nil else {
       return false
     }
-    return ProcessInfo.processInfo.systemUptime - frame.receivedAt < VideoWatchdog.staleAfter
+    return !watchdog.expired(now: ProcessInfo.processInfo.systemUptime)
   }
   var connectionTitle: String {
     switch lifecycle.phase {
@@ -105,6 +125,7 @@ import SwiftUI
   }
   func reconnectNow() {
     guard canReconnect else { return }
+    record(.manualReconnect)
     error = nil
     execute(lifecycle.retryNow())
     if closing { status = "Reconnecting now…" }
@@ -113,6 +134,7 @@ import SwiftUI
     for action in actions {
       switch action {
       case .open(let attempt):
+        record(.opening)
         // The lifecycle issues this only after the previous native worker has joined.
         let native = makeSession()
         session = native
@@ -133,6 +155,7 @@ import SwiftUI
         }
         native.start(device: attempt.device)
       case .close(let id):
+        recording.stop()
         guard lifecycle.attempt?.id == id else { continue }
         hasPicture = false
         rotation.cancel()
@@ -149,11 +172,14 @@ import SwiftUI
       if connecting { status = message }
     case 3:
       guard !closing else { return }
+      record(.nativeFailure)
       error = message
       status = "Connection interrupted · preparing to retry"
       execute(lifecycle.interrupt(attempt, now: ProcessInfo.processInfo.systemUptime))
     case 4:
       // NativeSession sends this only after input cleanup and pm_close complete.
+      record(.closed, health: session?.healthSnapshot())
+      recording.stop()
       session = nil
       hasPicture = false
       fps = 0
@@ -176,6 +202,7 @@ import SwiftUI
     }
   }
   func disconnect() {
+    if active { record(.stopped) }
     presence = nil
     usbWasAbsent = false
     execute(lifecycle.disconnect())
@@ -184,11 +211,13 @@ import SwiftUI
     status = closing ? "Disconnecting…" : "Disconnected"
   }
   private func sleep() {
+    if active { record(.sleeping) }
     execute(lifecycle.sleep())
     hasPicture = false
     if active { status = "Paused while your Mac sleeps" }
   }
   private func wake() {
+    if active { record(.waking) }
     execute(lifecycle.wake())
   }
   private func updateWaitingStatus() {
@@ -246,6 +275,7 @@ import SwiftUI
       let event = presence?.poll() ?? 0
       if event == 0 { break }
       if event == 2 {
+        if !usbWasAbsent { record(.usbRemoved) }
         usbWasAbsent = true
         if let id = sessionID, connecting || connected {
           error = "USB disconnected. Reconnect the cable to resume."
@@ -253,10 +283,14 @@ import SwiftUI
           execute(lifecycle.interrupt(id, now: now))
         }
       } else if event == 1 {
+        if usbWasAbsent { record(.usbReturned) }
         if usbWasAbsent && (lifecycle.phase == .waiting || closing) {
           execute(lifecycle.retryNow())
         }
         usbWasAbsent = false
+      } else if event == 3 {
+        record(.usbMonitorUnavailable)
+        presence = nil
       }
       // Monitor failure leaves the watchdog and timed retries available.
     }
@@ -265,7 +299,9 @@ import SwiftUI
     guard connecting || connected, let id = sessionID else { return }
     let frame = session?.mailbox.latest()
     watchdog.observe(frameAt: frame?.receivedAt)
+    if let health = session?.healthSnapshot() { watchdog.observe(health: health, now: now) }
     if watchdog.expired(now: now) {
+      record(connected ? .videoStalled : .startupTimeout)
       error = "Video stopped updating. Checking the USB connection and restarting the stream."
       status = "Restoring video…"
       execute(lifecycle.interrupt(id, now: now))
@@ -280,6 +316,7 @@ import SwiftUI
       fps = 0
       return
     }
+    if connecting { record(.firstFrame) }
     lifecycle.frame(id, now: now)
     hasPicture = true
     let displaySize =

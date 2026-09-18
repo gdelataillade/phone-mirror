@@ -3,7 +3,9 @@ import CoreVideo
 import Foundation
 import VideoToolbox
 
-struct VideoFrame {
+// Published decoder buffers are retained and read-only; VideoToolbox cannot reuse
+// their storage while a frame or screenshot retains them.
+struct VideoFrame: @unchecked Sendable {
   let pixelBuffer: CVPixelBuffer
   let size: CGSize
   let receivedAt: TimeInterval

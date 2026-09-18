@@ -21,5 +21,6 @@ cp Resources/Info.plist "$app/Contents/Info.plist"
 cp Vendor/idevice/LICENSE.txt "$app/Contents/Resources/idevice-LICENSE.txt"
 cp Vendor/DEVICE-HUB-LICENSE "$app/Contents/Resources/device-hub-LICENSE.txt"
 cp LICENSE "$app/Contents/Resources/PhoneMirror-LICENSE.txt"
+./scripts/build-icon.sh
 codesign --force --sign - "$app"
 echo "Built $app"

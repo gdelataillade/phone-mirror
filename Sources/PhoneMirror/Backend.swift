@@ -1,5 +1,6 @@
 import CMirror
 import Foundation
+import MirrorCore
 
 struct PhoneDevice: Codable, Identifiable, Hashable {
   let id: String
@@ -26,6 +27,8 @@ final class NativeSession: @unchecked Sendable {
   private let lock = NSLock()
   private var handle: OpaquePointer?
   private var cancelled = false
+  private var health = SessionHealth()
+  private var lastOutput: TimeInterval?
   private let queue = DispatchQueue(label: "PhoneMirror.native", qos: .userInteractive)
   private let beforeDecode: (() -> Void)?
   var event: ((UInt32, String) -> Void)?
@@ -59,6 +62,7 @@ final class NativeSession: @unchecked Sendable {
         let kind = pm_event_kind(item)
         if kind == 2 {
           beforeDecode?()
+          let decodeStarted = ProcessInfo.processInfo.systemUptime
           let data = (0..<4).map { part -> Data in
             var length = 0
             guard let bytes = pm_event_data(item, UInt32(part), &length) else { return Data() }
@@ -74,7 +78,9 @@ final class NativeSession: @unchecked Sendable {
                 width: Int(pm_event_value(item, 0)), height: Int(pm_event_value(item, 1))),
               sync: pm_event_value(item, 2) == 1, orientation: pm_event_value(item, 4))
             if produced { decodeFailures = 0 }
+            recordDecode(started: decodeStarted, produced: produced, failed: false)
           } catch {
+            recordDecode(started: decodeStarted, produced: false, failed: true)
             decodeFailures += 1
             decoder.stop()
             mailbox.clear()
@@ -97,6 +103,7 @@ final class NativeSession: @unchecked Sendable {
         pm_event_free(item)
       }
       lock.lock()
+      readNativeHealth()
       handle = nil
       lock.unlock()
       pm_close(session)
@@ -104,6 +111,36 @@ final class NativeSession: @unchecked Sendable {
       mailbox.clear()
       event?(4, "Disconnected")
     }
+  }
+  private func recordDecode(started: TimeInterval, produced: Bool, failed: Bool) {
+    let now = ProcessInfo.processInfo.systemUptime
+    lock.lock()
+    defer { lock.unlock() }
+    health.maxDecodeMs = max(health.maxDecodeMs, UInt64(max(0, now - started) * 1000))
+    if failed { health.decoderErrors += 1 } else if !produced { health.skippedFrames += 1 }
+    if produced {
+      health.decodedFrames += 1
+      if let lastOutput {
+        health.maxOutputGapMs = max(health.maxOutputGapMs, UInt64(max(0, now - lastOutput) * 1000))
+      }
+      lastOutput = now
+    }
+  }
+  // Called with lock held; shares the handle lifetime with send/cancel/close.
+  private func readNativeHealth() {
+    guard let handle, let text = pm_health(handle) else { return }
+    defer { pm_string_free(text) }
+    if let native = try? JSONDecoder().decode(
+      NativeHealth.self, from: Data(String(cString: text).utf8))
+    {
+      health.native = native
+    }
+  }
+  func healthSnapshot() -> SessionHealth {
+    lock.lock()
+    defer { lock.unlock() }
+    readNativeHealth()
+    return health
   }
   @discardableResult func send(_ kind: UInt32, _ a: UInt32 = 0, _ b: UInt32 = 0) -> Bool {
     lock.lock()
