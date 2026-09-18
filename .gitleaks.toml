@@ -1,0 +1,27 @@
+title = "PhoneMirror source privacy checks"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "apple-device-identifier"
+description = "A device identifier should not be committed; use the all-zero test fixture"
+regex = '''\b[0-9A-Fa-f]{8}-[0-9A-Fa-f]{16}\b'''
+[[rules.allowlists]]
+description = "Synthetic all-zero fixture"
+regexTarget = "match"
+regexes = ['''^00000000-0000000000000000$''']
+
+[[rules]]
+id = "personal-home-path"
+description = "Local user paths can expose personal information"
+regex = '''/(?:Users|home)/[A-Za-z0-9._-]+/'''
+
+[[rules]]
+id = "generic-api-key"
+[[rules.allowlists]]
+description = "Reviewed Rust variable assignment, not a literal credential"
+condition = "AND"
+paths = ['''^Vendor/idevice/src/remote_pairing/rp_pairing_file\.rs$''']
+regexTarget = "line"
+regexes = ['''^\s*self\.e_private_key = ed25519_private_key;\s*$''']

@@ -1,0 +1,4 @@
+module CMirror [system] {
+    header "include/PhoneMirror.h"
+    export *
+}

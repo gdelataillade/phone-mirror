@@ -1,0 +1,40 @@
+.build/
+build/
+Backend/target/
+.DS_Store
+
+# Local tools, captures, diagnostics and editor state
+work/
+DerivedData/
+.swiftpm/
+xcuserdata/
+*.xcuserstate
+*.xcresult/
+*.dSYM/
+*.log
+*.pcap
+*.pcapng
+captures/
+recordings/
+diagnostics-output/
+.idea/
+.vscode/
+
+# Credentials, pairing material and signing assets
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+pairing-records/
+pairing_records/
+
+# Generated distributions are audited separately before a release
+*.app/
+*.ipa
+*.zip
+*.tar.gz

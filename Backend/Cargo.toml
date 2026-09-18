@@ -1,0 +1,23 @@
+[package]
+name = "phone-mirror-backend"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+name = "phone_mirror_backend"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+idevice = { path = "../Vendor/idevice", default-features = false, features = ["ring", "usbmuxd", "core_device_proxy", "tunnel_tcp_stack", "display_stream", "tcp"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+serde_json = "1"
+plist = "1.8"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+plist-macro = "0.1.6"
+
+[profile.release]
+opt-level = 2
+lto = "thin"
