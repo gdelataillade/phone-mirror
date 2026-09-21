@@ -29,3 +29,18 @@ struct MirrorWindowLevel: NSViewRepresentable {
     }
   }
 }
+
+/// Lets the window's material blend with the desktop behind it instead of an opaque backing,
+/// matching the translucent "Liquid Glass" look of native windows like Simulator.
+struct WindowGlassBackground: NSViewRepresentable {
+  func makeNSView(context: Context) -> GlassView { GlassView() }
+  func updateNSView(_ view: GlassView, context: Context) {}
+
+  final class GlassView: NSView {
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      window?.isOpaque = false
+      window?.backgroundColor = .clear
+    }
+  }
+}

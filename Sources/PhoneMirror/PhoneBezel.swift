@@ -15,7 +15,7 @@ struct FramedMirror: View {
       let fitted = MirrorGeometry.contentRect(view: available, screen: model.screenSize).size
       let size = showBezel ? fitted : proxy.size
       let radius = showBezel ? min(size.width, size.height) * 0.12 : 0
-      MirrorSurface(model: model, cornerRadius: radius)
+      MirrorSurface(model: model, cornerRadius: radius, bezelInset: inset * 2)
         .frame(width: size.width, height: size.height)
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .background {

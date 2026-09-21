@@ -7,15 +7,19 @@ import SwiftUI
 struct MirrorSurface: NSViewRepresentable {
   @ObservedObject var model: MirrorModel
   var cornerRadius: CGFloat = 0
+  /// Total space (both sides combined) the bezel currently reserves around this view.
+  var bezelInset: CGFloat = 0
   func makeNSView(context: Context) -> MirrorView { MirrorView(model: model) }
   func updateNSView(_ view: MirrorView, context: Context) {
     view.cornerRadius = cornerRadius
+    view.bezelInset = bezelInset
     view.synchronize(model: model)
   }
 }
 
 final class MirrorView: MTKView, MTKViewDelegate {
   var cornerRadius: CGFloat = 0
+  var bezelInset: CGFloat = 0
   weak var model: MirrorModel?
   private var ci: CIContext?
   private var commands: MTLCommandQueue?
@@ -148,22 +152,23 @@ final class MirrorView: MTKView, MTKViewDelegate {
       else { return }
       self.releaseAll()
       let visible = window.screen?.visibleFrame.size ?? CGSize(width: 1200, height: 900)
-      let chrome = max(
-        0, (window.contentView?.bounds.height ?? self.bounds.height) - self.bounds.height)
+      // Anchor on the window's own current content size, not this view's bounds: with the
+      // bezel on, this view is already an aspect-fitted rect inset within that content size,
+      // so it understates how much room the window actually has to work with.
+      let currentContent = window.contentView?.bounds.size ?? bounds.size
+      let inset = bezelInset
       let aspect = presentation.size.width / presentation.size.height
-      let longSide = max(self.bounds.width, self.bounds.height)
+      let longSide = max(1, max(currentContent.width, currentContent.height) - inset)
       var height = aspect > 1 ? longSide / aspect : longSide
-      let horizontalChrome = max(
-        0, (window.contentView?.bounds.width ?? self.bounds.width) - self.bounds.width)
       var width = height * aspect
       let scale = min(
-        1, (visible.width - 40 - horizontalChrome) / width, (visible.height - 40 - chrome) / height)
+        1, (visible.width - 40 - inset) / width, (visible.height - 40 - inset) / height)
       width *= scale
       height *= scale
       window.setContentSize(
         CGSize(
-          width: max(360, width + horizontalChrome),
-          height: max(aspect > 1 ? 360 : 580, height + chrome)))
+          width: max(360, width + inset),
+          height: max(aspect > 1 ? 360 : 580, height + inset)))
     }
     fitWork = work
     // Give SwiftUI time to apply the landscape minimum window size first.
