@@ -61,7 +61,9 @@ final class MirrorView: MTKView, MTKViewDelegate {
     framebufferOnly = false
     isPaused = false
     preferredFramesPerSecond = 60
-    clearColor = MTLClearColorMake(0.035, 0.04, 0.045, 1)
+    // Matches the bezel's own background (PhoneBezel.swift) so a sub-pixel aspect-fit
+    // rounding gap at the content's edge blends in instead of showing as a seam.
+    clearColor = MTLClearColorMake(0.045, 0.045, 0.045, 1)
     delegate = self
     setAccessibilityLabel("Mirrored iPhone screen")
     setAccessibilityHelp("Click to focus. Mouse and keyboard control the connected iPhone.")
@@ -131,7 +133,8 @@ final class MirrorView: MTKView, MTKViewDelegate {
     image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale)).transformed(
       by: CGAffineTransform(translationX: rect.minX, y: rect.minY))
     let bounds = CGRect(origin: .zero, size: drawableSize)
-    let background = CIImage(color: CIColor(red: 0.035, green: 0.04, blue: 0.045)).cropped(
+    // Matches the bezel's own background (PhoneBezel.swift) — see clearColor above.
+    let background = CIImage(color: CIColor(red: 0.045, green: 0.045, blue: 0.045)).cropped(
       to: bounds)
     ci.render(
       image.composited(over: background), to: drawable.texture, commandBuffer: buffer,

@@ -93,8 +93,9 @@ final class NativeSession: @unchecked Sendable {
             }
             let produced = try decoder.decode(
               bytes: data[0], sets: Array(data.dropFirst()),
-              size: CGSize(
-                width: Int(pm_event_value(item, 0)), height: Int(pm_event_value(item, 1))),
+              size: FrameImage.trueEncodedSize(
+                CGSize(
+                  width: Int(pm_event_value(item, 0)), height: Int(pm_event_value(item, 1)))),
               sync: pm_event_value(item, 2) == 1, orientation: pm_event_value(item, 4))
             if produced { decodeFailures = 0 }
             recordDecode(started: decodeStarted, produced: produced, failed: false)

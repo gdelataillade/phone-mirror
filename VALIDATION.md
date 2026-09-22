@@ -456,3 +456,69 @@ implemented:
 No new automated tests were added for audio or the gesture shortcuts; this is
 live-hardware-dependent behavior, validated manually in the built app, same as
 prior AppKit-preference features in this log.
+
+## Bezel edge seam at certain window sizes — bug fix, 22 September
+
+At some window sizes (reproduced at 430×800pt, not at the default/auto-fit
+sizes), a thin black seam was visible between the video content and the
+bezel's inner edge on the right and bottom, inside the bezel — noticeable
+especially in exported screenshots. Root cause, confirmed via temporary
+render-path tracing: a small (sub-pixel to a few pixels) rounding gap between
+the aspect-fit content rect and the actual pixel grid — essentially
+unavoidable to fully eliminate with floating-point aspect math meeting integer
+pixels. It was only *visible* because the video surface's own letterbox fill
+color (`0.035, 0.04, 0.045`, a leftover from the pre-redesign solid app
+background) didn't match the bezel's own background color
+(`Color(white: 0.045)` in PhoneBezel.swift). Fixed by unifying both to the
+bezel's color, so any residual rounding gap blends in rather than showing as
+a seam. Verified live at the exact reproducing window size (screenshot before
+and after, cropped to the corner); clean at the default sizes too.
+
+This turned out to be a real but separate, minor issue — it did not fix the
+black border the user was actually reporting, which was present in raw
+screenshot exports with no bezel or window chrome involved. See the next
+entry for the actual root cause and fix.
+
+## Black border baked into decoded video content — bug fix, 22 September
+
+The bezel-seam fix above did not resolve it: a thin black border on the
+right and bottom edges was still present in an actual screenshot copied to
+the clipboard (verified by extracting the raw PNG bytes from the clipboard
+and inspecting pixels directly, independent of the app's own rendering).
+
+Investigation ruled out a metadata/crop-signaling bug first: `pixelBuffer`,
+`CVImageBufferGetCleanRect`, `frame.size`, and `ScreenPresentation.size` were
+all mutually consistent at 1216×2656, and a from-scratch manual parse of the
+live HEVC SPS bytes (RBSP de-emulation + Exp-Golomb, independent of the
+vendored parser) confirmed `conformance_window_flag=0` — the bitstream
+itself signals no cropping, so nothing in our own bookkeeping was wrong.
+
+A full-resolution pixel scan of the raw screenshot (every row near the right
+edge, every column near the bottom edge, not just a single sample line) found
+a sharp, 100%-uniform solid-black band: exactly 10px on the right and 32px on
+the bottom, with a clean cutoff to real content beyond that (near 0% black).
+Root cause: the iPhone's screen-capture HEVC encoder pads its coded picture
+to CTU-aligned dimensions (1216×2656, a multiple of 32 in both axes) but does
+not signal this via the standard conformance window, so neither VideoToolbox
+nor any metadata we receive reflects it — the padding is baked into the
+decoded picture as genuine black pixels. (The device's own stream-negotiation
+response separately reports `CustomWidth=1216, CustomHeight=2624` — the
+height matches this finding exactly, but the width field is uninformative
+here, equal to the padded size rather than the true content width.)
+
+Fixed by trimming this known padding in `FrameImage.oriented(_:_:)`
+(`Sources/MirrorCore/FrameImage.swift`), the function shared by both the live
+preview and screenshot export, applied before any rotation so it's correct
+in every orientation. Also corrected the decoded-frame size reported
+upstream (`Backend.swift`) via a new `FrameImage.trueEncodedSize(_:)` helper,
+so display scaling and touch-coordinate mapping (`MirrorGeometry`) stay
+consistent with the now-cropped image instead of drifting by the padding
+amount. Verified live: rebuilt, reconnected, copied a fresh screenshot to the
+clipboard, confirmed the border is gone.
+
+Caveat: the 10px/32px padding amount was confirmed empirically against one
+physical device (iPhone 17) and is currently a fixed constant, not derived
+per-device. If a different iPhone model later shows a different (or no)
+border, this constant is the place to revisit — ideally by finding an
+authoritative per-device source for the true content size rather than a
+fixed offset.

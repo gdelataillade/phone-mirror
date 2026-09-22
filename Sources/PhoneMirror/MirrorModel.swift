@@ -13,7 +13,7 @@ import SwiftUI
   @Published var hasPicture = false
   @Published var fps = 0
   @Published var dimensions = ""
-  @Published private(set) var screenSize = CGSize(width: 1206, height: 2622)
+  @Published private(set) var screenSize = CGSize(width: 1206, height: 2624)
   @Published private(set) var inputEpoch: UInt64 = 0
   @Published private(set) var fitWindowEpoch: UInt64 = 0
   @Published private(set) var isLandscape = false
