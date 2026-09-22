@@ -17,12 +17,16 @@ PMHandle *pm_start(const char *udid);
 char *pm_health(PMHandle *handle);
 // One consumer only. Events own their bytes until pm_event_free. No callbacks.
 PMEvent *pm_poll(PMHandle *handle, uint32_t timeout_ms);
-uint32_t pm_event_kind(const PMEvent *event); // 1 status, 2 frame, 3 error, 4 stopped, 5 rotation acknowledged (JSON), 6 rotation error
+// Independent queue from pm_poll: audio decode must never wait on video decode, or the reverse.
+// One consumer only.
+PMEvent *pm_poll_audio(PMHandle *handle, uint32_t timeout_ms);
+uint32_t pm_event_kind(const PMEvent *event); // 1 status, 2 frame, 3 error, 4 stopped, 5 rotation acknowledged (JSON), 6 rotation error, 7 audio frame (from pm_poll_audio)
 const uint8_t *pm_event_data(const PMEvent *event, uint32_t part, size_t *length);
-uint32_t pm_event_value(const PMEvent *event, uint32_t field); // width,height,sync,timestamp,orientation
+uint32_t pm_event_value(const PMEvent *event, uint32_t field); // width,height,sync,timestamp,orientation; for kind 7: RTP timestamp only
 void pm_event_free(PMEvent *event);
 // 1 touch down/move, 2 touch up, 3 key down, 4 key up, 5 Home, 6 release all,
-// 7 request keyframe, 8 App Switcher, 9 rotate right, 10 rotate left.
+// 7 request keyframe, 8 App Switcher, 9 rotate right, 10 rotate left,
+// 11 Spotlight, 12 Control Center.
 // Coordinates normalized 0…65535; key is USB HID usage.
 int32_t pm_command(PMHandle *handle, uint32_t kind, uint32_t a, uint32_t b);
 // Explicit one-shot UTF-8 paste. Maximum 64 KiB. Replaces the device clipboard.

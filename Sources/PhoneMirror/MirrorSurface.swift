@@ -281,7 +281,7 @@ final class MirrorView: MTKView, MTKViewDelegate {
     guard flags.contains(.command) else { return false }
     let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
     if ["q", "w", "h", "m"].contains(key) { return true }
-    if flags == .command && ["v", "r", "0", "s"].contains(key) { return true }
+    if flags == .command && ["v", "r", "0", "s", "1", "2", "3", "4"].contains(key) { return true }
     if flags == [.command, .shift] && ["a", "h", "d", "r", "c", "s"].contains(key) { return true }
     if flags == [.command, .option]
       && (["t", "b"].contains(key) || [123, 124].contains(event.keyCode))

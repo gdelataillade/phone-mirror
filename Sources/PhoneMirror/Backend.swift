@@ -30,10 +30,28 @@ final class NativeSession: @unchecked Sendable {
   private var health = SessionHealth()
   private var lastOutput: TimeInterval?
   private let queue = DispatchQueue(label: "PhoneMirror.native", qos: .userInteractive)
+  private let audioQueue = DispatchQueue(label: "PhoneMirror.audio", qos: .userInteractive)
   private let beforeDecode: (() -> Void)?
   var event: ((UInt32, String) -> Void)?
+  // Protected by `lock`: startAudioLoop assigns it once AudioPlayback exists, and
+  // applies whatever was last requested here, whichever order those two happen in.
+  private var audioPlayback: AudioPlayback?
+  private var desiredAudioMuted = true
+  private var desiredAudioVolume: Float = 0.7
   // The local diagnostic injects a slow consumer here; the app uses no hook.
   init(beforeDecode: (() -> Void)? = nil) { self.beforeDecode = beforeDecode }
+  func setAudioMuted(_ muted: Bool) {
+    lock.lock()
+    desiredAudioMuted = muted
+    audioPlayback?.muted = muted
+    lock.unlock()
+  }
+  func setAudioVolume(_ volume: Float) {
+    lock.lock()
+    desiredAudioVolume = volume
+    audioPlayback?.volume = volume
+    lock.unlock()
+  }
   func start(device: String) {
     queue.async { [self] in
       lock.lock()
@@ -50,6 +68,7 @@ final class NativeSession: @unchecked Sendable {
         event?(4, "Disconnected")
         return
       }
+      startAudioLoop(session: session)
       let decoder = HEVCDecoder(mailbox: mailbox)
       var decodeFailures = 0
       var ended = false
@@ -110,6 +129,46 @@ final class NativeSession: @unchecked Sendable {
       decoder.stop()
       mailbox.clear()
       event?(4, "Disconnected")
+    }
+  }
+  // Runs on its own queue against its own native poll: never waits on video decode.
+  // Never calls pm_close — start(device:)'s video loop owns session teardown.
+  private func startAudioLoop(session: OpaquePointer) {
+    let trace = ProcessInfo.processInfo.environment["PM_TRACE"] != nil
+    audioQueue.async {
+      let playback = AudioPlayback()
+      if playback == nil { traceLog("audio loop: AudioPlayback() returned nil") }
+      self.lock.lock()
+      playback?.muted = self.desiredAudioMuted
+      playback?.volume = self.desiredAudioVolume
+      self.audioPlayback = playback
+      self.lock.unlock()
+      var ended = false
+      var received = 0
+      while !ended {
+        self.lock.lock()
+        let shouldStop = self.cancelled
+        self.lock.unlock()
+        if shouldStop { break }
+        guard let item = pm_poll_audio(session, 100) else { continue }
+        let kind = pm_event_kind(item)
+        if kind == 7 {
+          received += 1
+          if trace, received == 1 { traceLog("audio loop: first kind=7 event received") }
+          var length = 0
+          if let bytes = pm_event_data(item, 0, &length), length > 0 {
+            playback?.decode(Data(bytes: bytes, count: length))
+          }
+        } else if kind == 4 {
+          ended = true
+        }
+        pm_event_free(item)
+      }
+      if trace { traceLog("audio loop: ended, received \(received) kind=7 events") }
+      playback?.stop()
+      self.lock.lock()
+      self.audioPlayback = nil
+      self.lock.unlock()
     }
   }
   private func recordDecode(started: TimeInterval, produced: Bool, failed: Bool) {

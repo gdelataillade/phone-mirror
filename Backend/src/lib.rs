@@ -98,6 +98,7 @@ impl PMEvent {
 pub struct PMHandle {
     health: health::SharedHealth,
     events: Mutex<mpsc::Receiver<PMEvent>>,
+    audio_events: Mutex<mpsc::Receiver<PMEvent>>,
     commands: async_mpsc::Sender<Command>,
     cancel: watch::Sender<bool>,
     worker: Option<thread::JoinHandle<()>>,
@@ -136,13 +137,23 @@ pub unsafe extern "C" fn pm_start(udid: *const c_char) -> *mut PMHandle {
     };
     let udid = udid.to_owned();
     let (tx, rx) = mpsc::sync_channel(16);
+    // Separate from the video/status channel so a stalled video decode on the
+    // consumer side can never starve audio delivery, or the reverse.
+    let (audio_tx, audio_rx) = mpsc::sync_channel(48);
     let (command_tx, command_rx) = async_mpsc::channel(64);
     let (cancel_tx, cancel_rx) = watch::channel(false);
     let health = Arc::new(Mutex::new(health::Health::default()));
     let worker_health = health.clone();
     let worker = thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            runtime()?.block_on(run(&udid, &tx, command_rx, cancel_rx, &worker_health))
+            runtime()?.block_on(run(
+                &udid,
+                &tx,
+                &audio_tx,
+                command_rx,
+                cancel_rx,
+                &worker_health,
+            ))
         }))
         .unwrap_or_else(|_| {
             Err("The native session stopped unexpectedly. Reconnect to try again.".into())
@@ -152,10 +163,12 @@ pub unsafe extern "C" fn pm_start(udid: *const c_char) -> *mut PMHandle {
             let _ = tx.send(PMEvent::message(3, e));
         }
         let _ = tx.send(PMEvent::message(4, "Disconnected"));
+        let _ = audio_tx.send(PMEvent::message(4, "Disconnected"));
     });
     Box::into_raw(Box::new(PMHandle {
         health,
         events: Mutex::new(rx),
+        audio_events: Mutex::new(audio_rx),
         commands: command_tx,
         cancel: cancel_tx,
         worker: Some(worker),
@@ -178,6 +191,20 @@ pub unsafe extern "C" fn pm_poll(handle: *mut PMHandle, timeout_ms: u32) -> *mut
         return std::ptr::null_mut();
     };
     match h.events.lock().ok().and_then(|rx| {
+        rx.recv_timeout(Duration::from_millis(timeout_ms.min(1000) as u64))
+            .ok()
+    }) {
+        Some(event) => Box::into_raw(Box::new(event)),
+        None => std::ptr::null_mut(),
+    }
+}
+/// Independent from pm_poll: audio decode must never wait on video decode, or the reverse.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pm_poll_audio(handle: *mut PMHandle, timeout_ms: u32) -> *mut PMEvent {
+    let Some(h) = (unsafe { handle.as_ref() }) else {
+        return std::ptr::null_mut();
+    };
+    match h.audio_events.lock().ok().and_then(|rx| {
         rx.recv_timeout(Duration::from_millis(timeout_ms.min(1000) as u64))
             .ok()
     }) {
@@ -281,6 +308,7 @@ async fn cancelled(rx: &mut watch::Receiver<bool>) {
 async fn run(
     udid: &str,
     tx: &mpsc::SyncSender<PMEvent>,
+    audio_tx: &mpsc::SyncSender<PMEvent>,
     commands: async_mpsc::Receiver<Command>,
     mut cancel: watch::Receiver<bool>,
     health: &health::SharedHealth,
@@ -327,6 +355,7 @@ async fn run(
         &mut display,
         session_id,
         tx,
+        audio_tx,
         commands,
         cancel.clone(),
         health,
@@ -355,12 +384,26 @@ fn find_data<'a>(v: &'a plist::Value, key: &str, depth: usize) -> Option<&'a [u8
         _ => None,
     }
 }
+fn find_int(v: &plist::Value, key: &str, depth: usize) -> Option<i64> {
+    if depth > 16 {
+        return None;
+    }
+    match v {
+        plist::Value::Dictionary(d) => d
+            .get(key)
+            .and_then(plist::Value::as_signed_integer)
+            .or_else(|| d.values().find_map(|v| find_int(v, key, depth + 1))),
+        plist::Value::Array(a) => a.iter().find_map(|v| find_int(v, key, depth + 1)),
+        _ => None,
+    }
+}
 async fn stream(
     adapter: &mut AdapterHandle,
     rsd: &mut RsdHandshake,
     display: &mut Display,
     session_id: uuid::Uuid,
     tx: &mpsc::SyncSender<PMEvent>,
+    audio_tx: &mpsc::SyncSender<PMEvent>,
     commands: async_mpsc::Receiver<Command>,
     cancel: watch::Receiver<bool>,
     health: &health::SharedHealth,
@@ -432,7 +475,7 @@ async fn stream(
         health::stage(health, 5);
         let audio_offer = build_screen_audio_offer(&uuid::Uuid::new_v4().to_string(), &info)
             .map_err(|e| e.to_string())?;
-        bounded(
+        let audio_response = bounded(
             "Screen session",
             display.start_media_stream(build_start_audio_parameters(
                 &host,
@@ -445,6 +488,12 @@ async fn stream(
             )),
         )
         .await?;
+        // The audio codec (AAC-ELD, 48kHz, 480-sample frames) isn't negotiable here.
+        // Only the RTP payload type is used to sanity-check incoming packets, read from
+        // the device's own echo of its negotiated streamConfig (the answer blob's SSRC
+        // field does not match what the device's live RTP packets actually carry).
+        let audio_payload_type =
+            find_int(&audio_response, "RxPayloadType", 0).and_then(|v| u8::try_from(v).ok());
         let our_ssrc = uuid::Uuid::new_v4().as_u128() as u32;
         let call_id = uuid::Uuid::new_v4().to_string();
         let offer =
@@ -469,6 +518,7 @@ async fn stream(
             parse_screen_video_answer(answer).map_err(|e| format!("Video negotiation: {e}"))?;
         Ok::<_, String>((
             audio,
+            audio_payload_type,
             video,
             our_ssrc,
             call_id,
@@ -483,6 +533,7 @@ async fn stream(
     };
     let (
         audio,
+        audio_payload_type,
         video,
         our_ssrc,
         call_id,
@@ -541,6 +592,10 @@ async fn stream(
     // The offer names the device feedback port; the RTP source port is different.
     let remote_video_port = 50001;
     let trace = std::env::var_os("PM_TRACE").is_some();
+    let mut audio_packets_seen: u64 = 0;
+    if trace {
+        eprintln!("audio: negotiated payload_type={audio_payload_type:?}");
+    }
     let result = 'media: loop {
         tokio::select! {
             _ = cancelled(&mut cancel_media) => break Ok(()),
@@ -571,7 +626,27 @@ async fn stream(
                 }
             }
             Some(_) = refresh_rx.recv() => {assembler.mark_stream_discontinuity();request_refresh=true;}
-            audio_packet = audio.recv() => { if audio_packet.is_err() {break Err("The USB media connection closed.".into());} }
+            audio_packet = audio.recv() => {
+                let packet = match audio_packet {Ok(p) => p, Err(_) => break Err("The USB media connection closed.".into())};
+                if is_rtcp(&packet.data) {continue;}
+                let Some(rtp) = RtpPacket::parse(&packet.data) else {
+                    if trace {eprintln!("audio: {} bytes did not parse as RTP", packet.data.len());}
+                    continue;
+                };
+                if let Some(pt) = audio_payload_type { if rtp.payload_type != pt {
+                    if trace {eprintln!("audio: dropped, payload_type {} != negotiated {pt}", rtp.payload_type);}
+                    continue;
+                }}
+                if rtp.payload.is_empty() {continue;}
+                audio_packets_seen += 1;
+                if trace && audio_packets_seen == 1 {
+                    eprintln!("audio: first accepted packet, pt={} ssrc={:#010x} payload_len={}", rtp.payload_type, rtp.ssrc, rtp.payload.len());
+                }
+                let event = PMEvent {kind: 7, values: [rtp.timestamp, 0, 0, 0, 0], parts: [rtp.payload.to_vec(), vec![], vec![], vec![]]};
+                if let Err(mpsc::TrySendError::Full(_)) = audio_tx.try_send(event) {
+                    if trace {eprintln!("audio: queue full; dropping a packet");}
+                }
+            }
             packet = video.recv() => {
                 let packet=match packet {Ok(p)=>p,Err(_)=>break Err("The USB video connection closed.".into())};
                 if is_rtcp(&packet.data) {continue;}
@@ -614,6 +689,9 @@ async fn stream(
             }
         }
     };
+    if trace {
+        eprintln!("audio: session ending, {audio_packets_seen} accepted packets total");
+    }
     let _ = input_stop_tx.send(true);
     let _ = orientation_worker.await;
     metrics.publish(health);
@@ -816,6 +894,21 @@ async fn input_loop(
                             ));
                         }
                     }
+                }
+                // Not an edge gesture (it starts mid-screen), so this is a synthesized
+                // drag on the raw touchscreen surface rather than an IndigoDigitizerEvent.
+                // Best-effort starting geometry; unverified against a live device.
+                11 => {
+                    release(&mut hid, &mut indigo, surface, &mut touch, &mut keys).await;
+                    hid.drag(32_768, 19_660, 32_768, 36_044, 15, 15).await?;
+                }
+                // IndigoDigitizerEvent's dedicated edge-swipe API (DigitizerEdge::Top,
+                // then ::Right) did not work live on either attempt. Trying the same
+                // raw-touchscreen-drag approach that worked for Spotlight (kind 11)
+                // instead, anchored near the top-right corner. Best-effort; unverified.
+                12 => {
+                    release(&mut hid, &mut indigo, surface, &mut touch, &mut keys).await;
+                    hid.drag(61_600, 1_966, 61_600, 26_214, 15, 15).await?;
                 }
                 _ => {}
             }

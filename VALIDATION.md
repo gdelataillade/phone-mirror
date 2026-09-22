@@ -367,3 +367,92 @@ results above replace that earlier unverified recovery status.
 - To complete visual QA, open a harmless landscape-capable app, rotate both ways,
   resize the window, and check edge taps and scrolling. Live landscape and saved
   captures with the bezel enabled were not rechecked in this pass.
+
+## Window resize with bezel enabled — bug fix, 22 September
+
+Rotating with the bezel enabled either did not resize the window at all, or left
+it the wrong shape after rotating back (kept the prior orientation's width, only
+grew height). Root cause: the resize math anchored on the video view's own AppKit
+bounds, which is already a bezel-inset, aspect-fitted rect once the bezel is
+shown, not the window's real available space. Fixed by anchoring on the window's
+actual `contentView` bounds plus an explicit bezel inset instead. Verified live,
+both rotation directions, bezel on and off, with window-scoped screenshots at
+each step; no black margins, no stuck-at-wrong-size behaviour.
+
+## Native macOS chrome, then reverted, 22 September
+
+Replaced the custom header/footer bars with a native title bar (device name + iOS
+version) and a unified NSToolbar, matching Simulator's look. This surfaced a
+reproducible bug: SwiftUI Buttons and Menus hosted inside an NSToolbar do not
+reliably dispatch clicks on this macOS 27 preview build — confirmed by screenshot
+(toolbar collapsed into a single system overflow chevron at the window's 360pt
+minimum width, swallowing even the "more options" menu). Trimming toolbar item
+count did not resolve it; Home and other buttons still did not respond to clicks
+even when directly visible, not overflowed.
+
+Reverted the interactive controls to plain, always-visible buttons in the window
+content (the pre-redesign structure), keeping only the native title bar/subtitle
+and a transparent background. Confirmed live: all buttons (pin, bezel toggle,
+mute, reconnect/disconnect/refresh, record, screenshot, rotate, home, app
+switcher) respond to clicks again.
+
+Separately, the same click-dispatch failure was confirmed in the standard macOS
+menu bar's "iPhone" menu — including pre-existing items untouched by this work
+(e.g. "Save Screenshot…"). Keyboard shortcuts for every menu command work
+correctly; only mouse clicks on NSMenu items fail. Treated as an environment-wide
+macOS 27 preview / SwiftUI `.commands` bridging bug, not an app defect — no
+attempt was made to rebuild the menu bar in raw AppKit for what is very likely a
+beta-OS issue. Keyboard shortcuts remain the reliable interface; the menu bar
+mainly serves as shortcut documentation until this is fixed upstream.
+
+## Audio playback, 22 September
+
+Investigated feasibility (protocol reading, then a live capture-and-decode
+prototype with throwaway Rust/Swift tools, deleted after use) before
+implementing. Confirmed: the device's system-audio RTP stream is **AAC-ELD,
+48000 Hz, stereo, 480-sample frames (10ms)**, unencrypted (`SRTPCipherSuite: 0`
+in the device's own negotiated `streamConfig`), payload type 101. The raw RTP
+payload decodes directly via `AudioConverter`/`AVAudioConverter` with
+`kAudioFormatMPEG4AAC_ELD` — no header stripping, no magic cookie needed. Silent
+periods send a constant 4-byte placeholder rather than real frames.
+
+Implemented as a second, independent native poll queue (`pm_poll_audio`, its own
+`mpsc` channel, its own Swift `DispatchQueue`) so audio decode can never wait on
+video decode or the reverse, matching the existing independent-generation
+architecture. Playback via `AVAudioEngine`/`AVAudioPlayerNode`. Muted by default;
+explicit mute toggle and volume slider, both persisted and applied to each new
+session.
+
+One live bug found and fixed during bring-up: the audio RTP stream's actual SSRC
+does not match the `RemoteSSRC` field in the device's `streamConfig` answer —
+validating against it silently dropped every packet. Fixed by validating only
+the RTP payload type (which did match), not SSRC.
+
+Verified live: real audio (a YouTube video playing on the phone) confirmed
+audible by ear through the Mac's speakers; mute/volume control confirmed
+working. No audio/video synchronization is attempted; each stream plays
+independently as it decodes. Not tested: interruption handling, backgrounding,
+long-run stability, non-music audio sources.
+
+## System-gesture shortcuts, 22 September
+
+Reassigned Home (⌘1) and App Switcher (⌘2) from their previous shortcuts; both
+use the pre-existing virtual-hardware-button mechanism (`indigo.send_button`,
+Consumer usage 0x40) and are confirmed working live.
+
+Added Spotlight (⌘3) and Control Center (⌘4) as new gestures, neither previously
+implemented:
+- Spotlight: a synthesized drag on the raw touchscreen surface from
+  approximately (50%, 30%) to (50%, 55%) of screen height, using the same
+  primitive that already powers scrolling. Confirmed working live.
+- Control Center: tried the vendored protocol's dedicated
+  `IndigoDigitizerEvent`/`DigitizerEdge` "edge-swipe system gesture" API first,
+  never previously used by this app. Neither `DigitizerEdge::Top` nor `::Right`
+  (both near the top-right corner) worked live. Switched to the same raw
+  touchscreen-drag approach that worked for Spotlight instead, anchored near the
+  top-right corner (94%, 3%) dragging down to (94%, 40%) of screen. Confirmed
+  working live.
+
+No new automated tests were added for audio or the gesture shortcuts; this is
+live-hardware-dependent behavior, validated manually in the built app, same as
+prior AppKit-preference features in this log.

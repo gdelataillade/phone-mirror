@@ -18,7 +18,6 @@ import SwiftUI
         }
     }
     .defaultSize(width: 440, height: 820)
-    .windowToolbarStyle(.unified(showsTitle: true))
     .commands {
       CommandGroup(replacing: .newItem) {}
       CommandGroup(replacing: .pasteboard) {
@@ -40,11 +39,17 @@ import SwiftUI
           .keyboardShortcut("c", modifiers: [.command, .shift]).disabled(
             !model.canCaptureScreenshot)
         RecordingCommands(model: model, recorder: model.recording)
+        Toggle("Mute iPhone Audio", isOn: $model.audioMuted)
+          .keyboardShortcut("m", modifiers: [.command, .option])
         Divider()
-        Button("Home") { model.home() }.keyboardShortcut("h", modifiers: [.command, .shift])
+        Button("Home") { model.home() }.keyboardShortcut("1", modifiers: [.command])
           .disabled(!model.canControl)
-        Button("App Switcher") { model.appSwitcher() }.keyboardShortcut(
-          "a", modifiers: [.command, .shift]
+        Button("App Switcher") { model.appSwitcher() }.keyboardShortcut("2", modifiers: [.command])
+          .disabled(!model.canControl)
+        Button("Spotlight") { model.spotlight() }.keyboardShortcut("3", modifiers: [.command])
+          .disabled(!model.canControl)
+        Button("Control Center") { model.controlCenter() }.keyboardShortcut(
+          "4", modifiers: [.command]
         ).disabled(!model.canControl)
         Button("Release All Inputs") { model.releaseInputs() }.keyboardShortcut(
           .escape, modifiers: [.command]
@@ -95,18 +100,116 @@ struct MirrorWindow: View {
   @AppStorage("showDeviceBezel") private var showDeviceBezel = true
   @ObservedObject var model: MirrorModel
   var body: some View {
-    ZStack {
-      if model.session != nil {
-        FramedMirror(model: model, showBezel: showDeviceBezel)
-          .id(model.sessionID).opacity(model.hasPicture ? 1 : 0)
+    VStack(spacing: 0) {
+      // Plain, always-visible buttons: NSToolbar items and Menus proved unreliable
+      // (clicks silently not registering) once this window is at its 360pt minimum
+      // width, even after trimming what collapsed into the system overflow chevron.
+      HStack(spacing: 14) {
+        Button {
+          alwaysOnTop.toggle()
+        } label: {
+          Image(systemName: alwaysOnTop ? "pin.fill" : "pin")
+        }
+        .buttonStyle(.plain)
+        .help(alwaysOnTop ? "Turn off Always on Top ⌥⌘T" : "Always on Top ⌥⌘T")
+        .accessibilityLabel("Always on Top")
+        .accessibilityValue(alwaysOnTop ? "On" : "Off")
+        Button {
+          showDeviceBezel.toggle()
+        } label: {
+          Image(systemName: "iphone")
+        }
+        .buttonStyle(.plain)
+        .help(showDeviceBezel ? "Hide iPhone Bezel ⌥⌘B" : "Show iPhone Bezel ⌥⌘B")
+        .accessibilityLabel("iPhone Bezel")
+        .accessibilityValue(showDeviceBezel ? "On" : "Off")
+        if model.hasPicture {
+          Button {
+            model.audioMuted.toggle()
+          } label: {
+            Image(systemName: speakerIcon)
+          }
+          .buttonStyle(.plain)
+          .help(model.audioMuted ? "Unmute iPhone audio" : "Mute iPhone audio")
+          .accessibilityLabel("iPhone audio")
+          .accessibilityValue(model.audioMuted ? "Muted" : "Unmuted")
+          if !model.audioMuted {
+            Slider(value: $model.audioVolume, in: 0...1) { Text("Volume") }
+              .labelsHidden()
+              .frame(width: 100)
+          }
+        }
+        Spacer()
+        if model.active {
+          Button {
+            model.reconnectNow()
+          } label: {
+            Image(systemName: "arrow.clockwise")
+          }.buttonStyle(.plain).help("Reconnect now ⇧⌘R").disabled(!model.canReconnect)
+            .accessibilityLabel("Reconnect now")
+          Button {
+            model.disconnect()
+          } label: {
+            Image(systemName: "xmark.circle")
+          }.buttonStyle(.plain).help("Disconnect and stop automatic reconnection")
+            .accessibilityLabel("Disconnect")
+        } else {
+          Button {
+            model.refresh()
+          } label: {
+            Image(systemName: "arrow.clockwise")
+          }.buttonStyle(.plain).help("Refresh devices").disabled(model.discovering)
+            .accessibilityLabel("Refresh devices")
+        }
+      }.padding(.horizontal, 16).padding(.vertical, 10)
+      Divider()
+      ZStack {
+        if model.session != nil {
+          FramedMirror(model: model, showBezel: showDeviceBezel)
+            .id(model.sessionID).opacity(model.hasPicture ? 1 : 0)
+        }
+        if !model.hasPicture { connectionView }
+        if let notice = model.screenshotNotice {
+          VStack {
+            Text(notice).font(.callout).padding(10)
+              .background(.regularMaterial, in: Capsule()).padding(.top, 12)
+            Spacer()
+          }.allowsHitTesting(false)
+        }
       }
-      if !model.hasPicture { connectionView }
-      if let notice = model.screenshotNotice {
-        VStack {
-          Text(notice).font(.callout).padding(10)
-            .background(.regularMaterial, in: Capsule()).padding(.top, 12)
+      if model.hasPicture {
+        Divider()
+        HStack(spacing: 16) {
+          Circle().fill(Color.green).frame(width: 6, height: 6)
+          Text("\(model.fps) fps").font(.system(size: 10, design: .monospaced)).foregroundStyle(
+            .tertiary)
           Spacer()
-        }.allowsHitTesting(false)
+          RecordingButton(model: model, recorder: model.recording)
+          Button {
+            model.saveScreenshot()
+          } label: {
+            Image(systemName: "camera")
+          }.buttonStyle(.plain).help("Save screenshot ⌘S · Copy screenshot ⇧⌘C")
+            .accessibilityLabel("Save screenshot").disabled(!model.canCaptureScreenshot)
+          Button {
+            model.rotate()
+          } label: {
+            Image(systemName: "rotate.right")
+          }.buttonStyle(.plain).help("Rotate iPhone right ⌥⌘→")
+            .accessibilityLabel("Rotate iPhone right").disabled(!model.canControl)
+          Button {
+            model.home()
+          } label: {
+            Image(systemName: "house")
+          }.buttonStyle(.plain).help("Home ⌘1").accessibilityLabel("Home").disabled(
+            !model.canControl)
+          Button {
+            model.appSwitcher()
+          } label: {
+            Image(systemName: "square.on.square")
+          }.buttonStyle(.plain).help("App Switcher ⌘2").accessibilityLabel("App Switcher")
+            .disabled(!model.canControl)
+        }.padding(.horizontal, 16).padding(.vertical, 10)
       }
     }
     .background(.regularMaterial)
@@ -114,60 +217,6 @@ struct MirrorWindow: View {
     .background(WindowGlassBackground().allowsHitTesting(false))
     .navigationTitle(model.selected?.name ?? "PhoneMirror")
     .navigationSubtitle(model.selected.map { "iOS \($0.version)" } ?? "")
-    .toolbar {
-      ToolbarItemGroup(placement: .primaryAction) {
-        Circle().fill(model.hasPicture ? Color.green : Color.secondary.opacity(0.5)).frame(
-          width: 7, height: 7
-        ).help(model.hasPicture ? "\(model.status) · \(model.fps) fps" : model.status)
-        Button {
-          alwaysOnTop.toggle()
-        } label: {
-          Image(systemName: alwaysOnTop ? "pin.fill" : "pin")
-        }
-        .help(alwaysOnTop ? "Turn off Always on Top ⌥⌘T" : "Always on Top ⌥⌘T")
-        .accessibilityLabel("Always on Top")
-        .accessibilityValue(alwaysOnTop ? "On" : "Off")
-        if model.hasPicture {
-          RecordingButton(model: model, recorder: model.recording)
-          Button {
-            model.saveScreenshot()
-          } label: {
-            Image(systemName: "camera")
-          }.help("Save screenshot ⌘S · Copy screenshot ⇧⌘C")
-            .accessibilityLabel("Save screenshot").disabled(!model.canCaptureScreenshot)
-          Button {
-            model.rotate()
-          } label: {
-            Image(systemName: "rotate.right")
-          }.help("Rotate iPhone right ⌥⌘→")
-            .accessibilityLabel("Rotate iPhone right").disabled(!model.canControl)
-          Button {
-            model.home()
-          } label: {
-            Image(systemName: "house")
-          }.help("Home ⇧⌘H").accessibilityLabel("Home").disabled(!model.canControl)
-          Button {
-            model.appSwitcher()
-          } label: {
-            Image(systemName: "square.on.square")
-          }.help("App Switcher ⇧⌘A").accessibilityLabel("App Switcher").disabled(!model.canControl)
-        }
-        Menu {
-          Toggle("Show iPhone Bezel", isOn: $showDeviceBezel)
-          Divider()
-          if model.active {
-            Button("Reconnect Now") { model.reconnectNow() }.disabled(!model.canReconnect)
-            Button("Disconnect") { model.disconnect() }
-          } else {
-            Button("Refresh Devices") { model.refresh() }.disabled(model.discovering)
-          }
-          Divider()
-          Button("Connection Diagnostics…") { model.showingDiagnostics = true }
-        } label: {
-          Image(systemName: "ellipsis.circle")
-        }.accessibilityLabel("More options")
-      }
-    }
     .alert(
       "Could not capture screenshot",
       isPresented: Binding(
@@ -190,6 +239,15 @@ struct MirrorWindow: View {
       Button("OK", role: .cancel) { model.rotationNotice = nil }
     } message: {
       Text(model.rotationNotice ?? "")
+    }
+  }
+  private var speakerIcon: String {
+    guard !model.audioMuted else { return "speaker.slash.fill" }
+    switch model.audioVolume {
+    case ..<0.01: return "speaker.fill"
+    case ..<0.34: return "speaker.wave.1.fill"
+    case ..<0.67: return "speaker.wave.2.fill"
+    default: return "speaker.wave.3.fill"
     }
   }
   private var connectionView: some View {

@@ -7,20 +7,21 @@
 Free, open-source iPhone mirroring and control for Mac, including in the EU.
 I built it for myself because other tools didn’t work for me.
 
-**Early preview; USB only, no audio.**
+**Early preview; USB only.**
 
 ## Features
 
 - Mouse, keyboard, scrolling and text paste.
 - Screenshots and silent screen recording.
-- Remote rotation, Home and App Switcher.
+- Audio playback with mute and volume control.
+- Remote rotation, Home, App Switcher, Spotlight and Control Center.
 - Optional iPhone bezels, Always on Top and automatic reconnection.
 
 ## Incoming features
 
 - Easier setup and a downloadable app.
 - AI-agent access for real-device testing.
-- Audio and Wi-Fi support (under investigation).
+- Wi-Fi support (under investigation).
 
 ## Setup
 

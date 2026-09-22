@@ -23,6 +23,25 @@ import SwiftUI
   @Published var screenshotBusy = false
   @Published var screenshotNotice: String?
   @Published var screenshotError: String?
+  // Defaults to muted: audio only starts once someone explicitly opts in.
+  @Published var audioMuted: Bool =
+    (UserDefaults.standard.object(forKey: "audioMuted") as? Bool)
+    ?? true
+  {
+    didSet {
+      UserDefaults.standard.set(audioMuted, forKey: "audioMuted")
+      session?.setAudioMuted(audioMuted)
+    }
+  }
+  @Published var audioVolume: Double =
+    (UserDefaults.standard.object(forKey: "audioVolume")
+      as? Double) ?? 0.7
+  {
+    didSet {
+      UserDefaults.standard.set(audioVolume, forKey: "audioVolume")
+      session?.setAudioVolume(Float(audioVolume))
+    }
+  }
   private(set) var diagnostics = ConnectionDiagnostics(
     started: ProcessInfo.processInfo.systemUptime)
   private var rotationLocked = false
@@ -139,6 +158,8 @@ import SwiftUI
         // The lifecycle issues this only after the previous native worker has joined.
         let native = makeSession()
         session = native
+        native.setAudioMuted(audioMuted)
+        native.setAudioVolume(Float(audioVolume))
         error = nil
         rotation.cancel()
         rotationNotice = nil
@@ -259,6 +280,16 @@ import SwiftUI
     guard canControl else { return }
     releaseInputs()
     _ = session?.send(8)
+  }
+  func spotlight() {
+    guard canControl else { return }
+    releaseInputs()
+    _ = session?.send(11)
+  }
+  func controlCenter() {
+    guard canControl else { return }
+    releaseInputs()
+    _ = session?.send(12)
   }
   func pasteText() {
     guard canControl, let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
