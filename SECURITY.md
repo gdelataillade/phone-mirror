@@ -1,6 +1,6 @@
 # Security and privacy
 
-PhoneMirror controls a trusted, unlocked iPhone through local Apple developer
+iPhoneMirror controls a trusted, unlocked iPhone through local Apple developer
 services. It has no analytics service, background clipboard synchronization, or
 default screen/keystroke recording. Explicit paste replaces the iPhone clipboard.
 Device identity is discovered at runtime rather than embedded in the source.

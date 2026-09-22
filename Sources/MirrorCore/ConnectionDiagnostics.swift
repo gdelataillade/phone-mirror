@@ -128,7 +128,7 @@ public struct ConnectionDiagnostics {
       return $0.health.map { line + "\n" + $0.report } ?? line
     }.joined(separator: "\n")
     return """
-      PhoneMirror connection diagnostics · format 1
+      iPhoneMirror connection diagnostics · format 1
       App: \(Self.version(appVersion)) · macOS: \(Self.version(macOSVersion)) · iOS: \(Self.version(iOSVersion))
       Transport: USB · State: \(phase) · Connection attempts: \(attempts)
       Counters are local observations, not end-to-end latency measurements.

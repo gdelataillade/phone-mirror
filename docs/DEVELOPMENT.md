@@ -1,12 +1,12 @@
 # Development notes
 
-[Back to PhoneMirror](../README.md)
+[Back to iPhoneMirror](../README.md)
 
 Commands below run from the repository root.
 
 ## Structure
 
-- `Sources/PhoneMirror`: native window, input, lifecycle, decoder and GPU renderer.
+- `Sources/iPhoneMirror`: native window, input, lifecycle, decoder and GPU renderer.
 - `Sources/MirrorCore`: connection policy, decoded-video watchdog, coordinate
   transformations, physical keyboard state and bounded scroll gestures.
 - `Sources/CMirror`: the narrow C ABI. Events are polled and freed explicitly;

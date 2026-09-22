@@ -22,7 +22,7 @@ the version from idevice commit `3d46f2c5087c429ecb9b93a3c84f903461743ec4`, whos
 The later module included a captured device pairing fixture and attributed its
 back-reference additions to a project with different licensing terms. Retaining
 the earlier module removes both from this distribution. Its two codec tests are
-run by `scripts/test.sh`. PhoneMirror does not enable the `remote_pairing` feature;
+run by `scripts/test.sh`. iPhoneMirror does not enable the `remote_pairing` feature;
 its USB display/input path is unaffected. That optional module does not include
 the later back-reference support. The peer-device test uses an all-zero synthetic
 device identifier.

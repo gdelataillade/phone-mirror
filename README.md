@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="Resources/AppIcon.png" width="112" alt="PhoneMirror icon">
+  <img src="Resources/AppIcon.png" width="112" alt="iPhoneMirror icon">
 </p>
 
-# PhoneMirror
+# iPhoneMirror
 
 Free, open-source iPhone mirroring and control for Mac, including in the EU.
 I built it for myself because other tools didn’t work for me.
@@ -39,7 +39,7 @@ No downloadable app yet. Build locally:
 git clone https://github.com/gdelataillade/phone-mirror.git
 cd phone-mirror
 ./scripts/build.sh
-open build/PhoneMirror.app
+open build/iPhoneMirror.app
 ```
 
 Keep your iPhone unlocked, click **Mirror iPhone**, then click the picture to control it.

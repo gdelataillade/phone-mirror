@@ -51,7 +51,7 @@ extension MirrorModel {
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_US_POSIX")
     formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
-    panel.nameFieldStringValue = "PhoneMirror \(formatter.string(from: capturedAt)).png"
+    panel.nameFieldStringValue = "iPhoneMirror \(formatter.string(from: capturedAt)).png"
     panel.begin { [weak self] response in
       guard let self else { return }
       guard response == .OK, let url = panel.url else {

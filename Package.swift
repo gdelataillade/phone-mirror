@@ -4,18 +4,22 @@ import PackageDescription
 
 let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
 let package = Package(
-  name: "PhoneMirror",
+  name: "iPhoneMirror",
   platforms: [.macOS("27.0")],
-  products: [.executable(name: "PhoneMirror", targets: ["PhoneMirror"])],
+  products: [.executable(name: "iPhoneMirror", targets: ["iPhoneMirror"])],
+  dependencies: [
+    .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0")
+  ],
   targets: [
     .systemLibrary(name: "CMirror", path: "Sources/CMirror"),
     .target(name: "MirrorCore"),
     .executableTarget(
-      name: "PhoneMirror", dependencies: ["CMirror", "MirrorCore"],
+      name: "iPhoneMirror", dependencies: ["CMirror", "MirrorCore", "Sparkle"],
       linkerSettings: [
         .unsafeFlags(["-L", root + "/Backend/target/release"]),
         .linkedLibrary("phone_mirror_backend"),
         .linkedFramework("Security"), .linkedFramework("SystemConfiguration"),
+        .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
       ]),
     .testTarget(name: "MirrorCoreTests", dependencies: ["MirrorCore"]),
   ],
