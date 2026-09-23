@@ -110,14 +110,9 @@ if [ -z "$ed_signature" ] || [ -z "$enclosure_length" ]; then
     exit 1
 fi
 
-# --- Publish the GitHub Release first, so the appcast enclosure URL is live ---
-release_notes="Release $version. See VALIDATION.md and the commit history for details."
-gh release create "v$version" "$dmg" "$update_zip" \
-    --repo "$repo" --title "iPhoneMirror $version" --notes "$release_notes"
-
 # --- Append the appcast entry and re-sign the feed ---
 enclosure_url="https://github.com/$repo/releases/download/v$version/iPhoneMirror-$version.zip"
-pub_date="$(date -u "+%a, %d %b %Y %H:%M:%S +0000")"
+pub_date="$(LC_ALL=C date -u "+%a, %d %b %Y %H:%M:%S +0000")"
 python3 - "$version" "$next_build" "$pub_date" "$enclosure_url" "$ed_signature" "$enclosure_length" <<'PY'
 import sys
 import xml.etree.ElementTree as ET
@@ -171,10 +166,18 @@ if comment_block:
 PY
 "$sign_update" --account "$sparkle_account" docs/appcast.xml
 
-# --- Commit and push the version bump + appcast ---
+# --- Commit and push BEFORE tagging the release: gh release create with no
+# --target tags whatever the branch's latest commit happens to be, which
+# without this ordering would be the commit before the version bump and
+# appcast update even existed. ---
 git add Resources/Info.plist docs/appcast.xml
 git commit -m "Release iPhoneMirror $version"
 git push
+release_sha="$(git rev-parse HEAD)"
+
+# --- Publish the GitHub Release, explicitly pinned to that commit ---
+release_notes="Release $version. See VALIDATION.md and the commit history for details."
+gh release create "v$version" "$dmg" "$update_zip" \
+    --repo "$repo" --target "$release_sha" --title "iPhoneMirror $version" --notes "$release_notes"
 
 echo "Released iPhoneMirror $version: https://github.com/$repo/releases/tag/v$version"
-echo "Appcast updated — make sure GitHub Pages is serving docs/appcast.xml before relying on it."

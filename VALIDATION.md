@@ -544,17 +544,18 @@ menu/toolbar click-dispatch bug noted above, so there's a reliable manual
 path even if the menu item doesn't register a click. `Package.swift` needed
 `-Xlinker -rpath -Xlinker @executable_path/../Frameworks` (plain `-rpath`
 fails: swiftc rejects it unless routed through `-Xlinker`) so the built
-binary can find the framework at runtime. `scripts/build.sh` now locates
+binary can find the framework at runtime. `scripts/build.sh` locates
 `Sparkle.framework` under `.build/`, copies it into `Contents/Frameworks`,
-and ad-hoc-signs it with `--deep` before signing the app — local-only, not a
-distribution signing strategy; real releases need Developer ID signing of
-each nested component individually, Hardened Runtime and notarization.
+and at this point ad-hoc-signed it with `--deep` before signing the app —
+local-only, not a distribution signing strategy. This was later replaced
+with proper inside-out signing of each nested component individually; see
+"Release pipeline" below.
 
-`SUFeedURL` points at a GitHub Pages URL that doesn't serve an appcast yet,
-and `SUPublicEDKey` is deliberately left out entirely rather than filled
-with a placeholder, so an update check fails cleanly (visibly, in Sparkle's
-own UI) instead of silently trusting nothing. Both need real values before
-this can actually deliver an update.
+At this point `SUFeedURL` pointed at a GitHub Pages URL that didn't serve an
+appcast yet, and `SUPublicEDKey` was deliberately left out entirely rather
+than filled with a placeholder, so an update check failed cleanly (visibly,
+in Sparkle's own UI) instead of silently trusting nothing. Both were filled
+in once real values existed; see "Release pipeline" below.
 
 Verified live: built clean, launched, confirmed no dyld/missing-framework
 crash, reconnected to a live iPhone, and confirmed the renamed window, all
@@ -564,3 +565,61 @@ own action is a single trivial call into Sparkle; the meaningful risk was
 whether linking and embedding the framework broke the app, which launching
 successfully already rules out) — actually checking an update requires the
 appcast/signing key work above first.
+
+## Release pipeline: signing, DMG, notarization, appcast, 22–23 September
+
+Generated the Sparkle EdDSA signing keypair with `generate_keys --account
+iPhoneMirror`; the private key lives only in the login keychain (never
+written to disk or the repo) and `SUPublicEDKey` in `Resources/Info.plist`
+now holds the real public key. `sign_update`'s first real use triggers a
+one-time macOS Keychain access prompt that blocks forever with nothing
+there to click it — including a non-interactive release run — so this
+needs clearing once, interactively, before `scripts/release.sh` can run
+unattended; done and confirmed (`sign_update` now signs instantly, no
+prompt).
+
+Replaced `scripts/build.sh`'s ad-hoc `--deep` Sparkle-framework signing with
+proper inside-out signing of each nested component (XPC services, then
+`Autoupdate`, then `Updater.app`, then the framework, then the app), gated
+by a `CODESIGN_IDENTITY` env var so the same script produces either a local
+ad-hoc build (default) or a real Developer ID build depending on what's
+set. `set -u` originally broke on an empty `runtime_flags=()` array
+expansion — macOS ships bash 3.2, which mishandles that — fixed by using a
+plain conditional `sign()` function instead of an array. Verified: rebuilt
+ad-hoc, `codesign --verify --deep --strict` passed, app still launched.
+
+Wrote `scripts/release.sh`: version bump, signed build, notarize/staple the
+app, build/sign/notarize/staple the DMG, re-zip and sign the Sparkle
+enclosure, append an appcast entry, commit, push, then publish the GitHub
+Release pinned to that exact commit via `--target` (an earlier version
+called `gh release create` before committing, so the tag would have pointed
+at the pre-release commit and missed both the version bump and the appcast
+entry — caught in PR review, fixed by reordering). `pubDate` generation
+forces `LC_ALL=C` so the RFC-2822-style date stays in English regardless of
+the machine's locale (arm64 `date`'s `%a`/`%b` are locale-dependent; this
+was also caught in review — verified by checking `date` was not otherwise
+forced to a locale anywhere else the appcast touches).
+
+Tested independently, since a full release needs a Developer ID certificate
+and notarization credentials that didn't exist yet when most of this was
+written (both were added afterward, by the user, following the setup notes
+at the top of `release.sh`):
+- DMG creation (`hdiutil create` + verify + mount + contents check) — works.
+- The appcast item-insertion Python block, run twice against a scratch copy
+  of `docs/appcast.xml` to simulate two consecutive releases — newest-first
+  ordering, explanatory header comment, and indentation all survive
+  correctly; output is valid XML both times.
+- `sign_update docs/appcast.xml` genuinely signs the file in place (not a
+  no-op printing to stdout, which a review comment initially assumed): it
+  rewrites the file with a `sparkle-sign-warning` comment near the top and
+  an embedded `sparkle-signatures` comment (edSignature + length) at the
+  end. Confirmed by diffing the file before/after on a scratch copy.
+
+Not yet tested: a real end-to-end `scripts/release.sh` run (signed build →
+notarization → DMG → GitHub Release → appcast publish, all together). The
+three prerequisites (Developer ID certificate, notarization credentials,
+Keychain approval) are now all in place, so this is the next concrete step,
+not a blocker.
+
+GitHub Pages is enabled (source: `/docs` on `main`), so `SUFeedURL` will
+resolve once this branch's `docs/appcast.xml` reaches `main`.
