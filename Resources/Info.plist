@@ -1,19 +1,36 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>CFBundleIconFile</key><string>AppIcon</string>
-<key>CFBundleName</key><string>iPhoneMirror</string>
-<key>CFBundleDisplayName</key><string>iPhoneMirror</string>
-<key>CFBundleIdentifier</key><string>me.gdelataillade.iPhoneMirror</string>
-<key>CFBundleExecutable</key><string>iPhoneMirror</string>
-<key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.1.0</string>
-<key>CFBundleVersion</key><string>1</string>
-<key>LSMinimumSystemVersion</key><string>27.0</string>
-<key>NSHighResolutionCapable</key><true/>
-<key>NSSupportsAutomaticTermination</key><false/>
-<key>SUFeedURL</key><string>https://gdelataillade.github.io/phone-mirror/appcast.xml</string>
-<key>SUEnableAutomaticChecks</key><true/>
-<key>SUScheduledCheckInterval</key><integer>86400</integer>
-<key>SUPublicEDKey</key><string>K7yd8MuC+vmdCZpOV1qHH/VX03Tja9FgVeydHu3S2sQ=</string>
-</dict></plist>
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>iPhoneMirror</string>
+	<key>CFBundleExecutable</key>
+	<string>iPhoneMirror</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>me.gdelataillade.iPhoneMirror</string>
+	<key>CFBundleName</key>
+	<string>iPhoneMirror</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.2.0</string>
+	<key>CFBundleVersion</key>
+	<string>2</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>27.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://gdelataillade.github.io/phone-mirror/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>K7yd8MuC+vmdCZpOV1qHH/VX03Tja9FgVeydHu3S2sQ=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+</dict>
+</plist>
