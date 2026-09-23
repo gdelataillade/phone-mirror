@@ -623,3 +623,36 @@ not a blocker.
 
 GitHub Pages is enabled (source: `/docs` on `main`), so `SUFeedURL` will
 resolve once this branch's `docs/appcast.xml` reaches `main`.
+
+## Disconnect crash — use-after-free, 23 September
+
+Reported after installing the real v0.2.0 release: the app reliably
+crashed whenever a mirroring session disconnected, which it hadn't done
+before. Reproduced immediately — a crash report was sitting in
+`~/Library/Logs/DiagnosticReports/` from the app being left running after
+the previous session's install test. `SIGSEGV` inside `pthread_mutex_unlock`
+on the `iPhoneMirror.audio` thread, inside `pm_poll_audio` called from
+`NativeSession.startAudioLoop`.
+
+Root cause: the video pump and the audio loop each poll independently on
+their own `DispatchQueue`, both against the same native `session` handle.
+When the video pump's own poll loop ends (device disconnect, decode
+failure, or `cancel()`), it frees the handle with `pm_close(session)`
+immediately — with no guarantee the audio loop, running on a different
+thread, wasn't at that exact moment inside `pm_poll_audio`, which locks a
+mutex that's part of the now-freed handle. This is a real, always-present
+race, not something that only started happening now — a genuine use-
+after-free reliably reproducing on this machine likely reflects OS-level
+scheduling/timing changes (or simply more testing of the exact disconnect
+path) more than a change in this app's own code. Also affected the same
+decode-failure teardown path, not just disconnect.
+
+Fixed in `Sources/iPhoneMirror/Backend.swift` with a `DispatchGroup`
+(`audioLoopFinished`): `startAudioLoop` enters it before dispatching and
+leaves it (via `defer`) only after its poll loop has fully exited and
+cleaned up; the video pump's teardown now sets `cancelled = true` (so the
+audio loop's own check picks it up even on a device-initiated disconnect,
+which previously left that flag untouched) and waits on the group before
+calling `pm_close`. Verified live: rebuilt, connected, disconnected via the
+UI button twice in a row — clean each time, same PID survives, no new
+crash report, versus the crash reproducing immediately before the fix.

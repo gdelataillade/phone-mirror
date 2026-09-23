@@ -31,6 +31,11 @@ final class NativeSession: @unchecked Sendable {
   private var lastOutput: TimeInterval?
   private let queue = DispatchQueue(label: "iPhoneMirror.native", qos: .userInteractive)
   private let audioQueue = DispatchQueue(label: "iPhoneMirror.audio", qos: .userInteractive)
+  // The video pump and the audio loop poll the same native handle independently and
+  // on separate queues. pm_close frees it, so the pump must not call pm_close while
+  // the audio loop might still be inside pm_poll_audio — entered/left around
+  // startAudioLoop's whole body, and waited on before pm_close below.
+  private let audioLoopFinished = DispatchGroup()
   private let beforeDecode: (() -> Void)?
   var event: ((UInt32, String) -> Void)?
   // Protected by `lock`: startAudioLoop assigns it once AudioPlayback exists, and
@@ -125,7 +130,12 @@ final class NativeSession: @unchecked Sendable {
       lock.lock()
       readNativeHealth()
       handle = nil
+      // Ended because the device disconnected, not because cancel() was called:
+      // force the audio loop's own shouldStop check too, so it can't be left
+      // waiting on its own terminal event while this thread frees the handle.
+      cancelled = true
       lock.unlock()
+      audioLoopFinished.wait()
       pm_close(session)
       decoder.stop()
       mailbox.clear()
@@ -133,10 +143,14 @@ final class NativeSession: @unchecked Sendable {
     }
   }
   // Runs on its own queue against its own native poll: never waits on video decode.
-  // Never calls pm_close — start(device:)'s video loop owns session teardown.
+  // Never calls pm_close — start(device:)'s video loop owns session teardown, and
+  // waits on audioLoopFinished before calling it, so this loop must always be the
+  // last thing touching `session` before that happens.
   private func startAudioLoop(session: OpaquePointer) {
     let trace = ProcessInfo.processInfo.environment["PM_TRACE"] != nil
+    audioLoopFinished.enter()
     audioQueue.async {
+      defer { self.audioLoopFinished.leave() }
       let playback = AudioPlayback()
       if playback == nil { traceLog("audio loop: AudioPlayback() returned nil") }
       self.lock.lock()
