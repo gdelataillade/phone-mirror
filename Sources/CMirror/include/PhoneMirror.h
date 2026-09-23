@@ -31,6 +31,9 @@ void pm_event_free(PMEvent *event);
 int32_t pm_command(PMHandle *handle, uint32_t kind, uint32_t a, uint32_t b);
 // Explicit one-shot UTF-8 paste. Maximum 64 KiB. Replaces the device clipboard.
 int32_t pm_paste(PMHandle *handle, const uint8_t *text, size_t length);
+// Explicit one-shot PNG image paste. Maximum 15 MiB (provisional; see VALIDATION.md).
+// Replaces the device clipboard.
+int32_t pm_paste_image(PMHandle *handle, const uint8_t *bytes, size_t length);
 void pm_cancel(PMHandle *handle);
 // No other call may use handle once close starts. Joins all work; may block.
 void pm_close(PMHandle *handle);

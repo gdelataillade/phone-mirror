@@ -656,3 +656,53 @@ which previously left that flag untouched) and waits on the group before
 calling `pm_close`. Verified live: rebuilt, connected, disconnected via the
 UI button twice in a row — clean each time, same PID survives, no new
 crash report, versus the crash reproducing immediately before the fix.
+
+## Drag an image onto the mirror to paste it, 23 September
+
+Extends the existing text-paste feature (⌘V → `pasteboard.set_text` +
+synthetic Cmd+V) to images, reusing the same two-step pattern rather than
+inventing a new one. `pm_paste_image` (`Backend/src/lib.rs`) takes raw
+bytes, calls `pasteboard.set_image(&bytes, UTI_PNG, GENERAL_PASTEBOARD)`
+— already fully implemented in the vendored `idevice` crate, so this
+needed zero new protocol work — then sends the identical synthetic Cmd+V
+keycode sequence `[227, 25]` used by the text path. A provisional 15 MiB
+cap gates the FFI call; the pasteboard service's real limit hasn't been
+tested against an actual large photo yet.
+
+The drop target is SwiftUI's `.onDrop(of: [.fileURL, .image], ...)` on the
+phone-content area (`iPhoneMirrorApp.swift`), not a raw AppKit
+`NSDraggingDestination` on the Metal `MirrorView` — deliberately avoided
+touching that view since it already does extensive raw mouse/keyboard
+capture for touch simulation. Tries a dropped Finder file first, falls
+back to raw image data for a drag that isn't file-backed (a webpage,
+Preview). Always re-encodes to PNG via `NSBitmapImageRep` regardless of
+source format, rather than passing through original bytes — one
+well-formed code path against arbitrary dropped input, at the cost of a
+recompression step for already-JPEG photos.
+
+Verified live end to end, not just built-and-assumed-correct. Live-testing
+this needed a real OS drag session — `NSItemProvider` isn't something you
+can hand-construct — so a small standalone `NSDraggingSource` helper was
+built to serve as a controlled drag origin (avoided needing exact Finder
+icon coordinates), and a real multi-step `CGEventPost` drag (mouse down,
+20 incremental `mouseDragged` steps, mouse up — a single jump doesn't
+register as a real drag) carried a synthetic test image onto the mirrored
+screen while iMessage's compose field was focused on the phone. The image
+correctly reached the device and appeared as a real, ready-to-send
+attachment in the compose field.
+
+One finding only live testing could have surfaced: iOS shows a system
+permission prompt ("'Messages' would like to paste from 'dtpasteboardd' —
+Allow Paste / Don't Allow Paste") before the pasted image lands, because
+the write comes from a remote/foreign pasteboard source rather than a
+same-app recent copy. This is standard iOS pasteboard-privacy behavior,
+not something to work around — the feature is "drop, then tap Allow Paste
+once," not a fully silent drop. Worth setting that expectation rather than
+promising a silent paste.
+
+Not yet tested: the real size ceiling for `set_image` over this RemoteXPC
+service (only a small synthetic image has been tried), whether the "Allow
+Paste" prompt recurs every drop or is remembered for some period after the
+first approval, and dropping a non-image file (should fail silently via
+the existing beep-on-failure path, matching `pasteText()`, but not yet
+confirmed live).

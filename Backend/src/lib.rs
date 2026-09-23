@@ -106,6 +106,7 @@ pub struct PMHandle {
 enum Command {
     Input(u32, u32, u32),
     Paste(String),
+    PasteImage(Vec<u8>),
 }
 fn status(tx: &mpsc::SyncSender<PMEvent>, message: &str) {
     let _ = tx.try_send(PMEvent::message(1, message));
@@ -273,6 +274,29 @@ pub unsafe extern "C" fn pm_paste(handle: *mut PMHandle, text: *const u8, length
         return 0;
     };
     if h.commands.try_send(Command::Paste(text.into())).is_ok() {
+        1
+    } else {
+        let _ = h.cancel.send(true);
+        0
+    }
+}
+// Provisional; not yet validated against the pasteboard service's real limit.
+// See VALIDATION.md once that's been tested live with a large photo.
+const MAX_PASTE_IMAGE_BYTES: usize = 15 * 1024 * 1024;
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pm_paste_image(
+    handle: *mut PMHandle,
+    bytes: *const u8,
+    length: usize,
+) -> i32 {
+    let Some(h) = (unsafe { handle.as_ref() }) else {
+        return 0;
+    };
+    if bytes.is_null() || length == 0 || length > MAX_PASTE_IMAGE_BYTES || *h.cancel.borrow() {
+        return 0;
+    }
+    let data = unsafe { std::slice::from_raw_parts(bytes, length) }.to_vec();
+    if h.commands.try_send(Command::PasteImage(data)).is_ok() {
         1
     } else {
         let _ = h.cancel.send(true);
@@ -798,6 +822,27 @@ async fn input_loop(
                         ));
                     };
                     pasteboard.set_text(&text, GENERAL_PASTEBOARD).await?;
+                    for key in [227, 25] {
+                        keys.insert(key);
+                        indigo.send_keyboard(key as u64, ButtonState::Down).await?;
+                    }
+                    tokio::time::sleep(Duration::from_millis(40)).await;
+                    for key in [25, 227] {
+                        indigo.send_keyboard(key as u64, ButtonState::Up).await?;
+                        keys.remove(&key);
+                    }
+                    return Ok(());
+                }
+                Command::PasteImage(bytes) => {
+                    release(&mut hid, &mut indigo, surface, &mut touch, &mut keys).await;
+                    let Some(pasteboard) = pasteboard.as_mut() else {
+                        return Err(idevice::IdeviceError::UnexpectedResponse(
+                            "The iPhone pasteboard service is unavailable.".into(),
+                        ));
+                    };
+                    pasteboard
+                        .set_image(&bytes, UTI_PNG, GENERAL_PASTEBOARD)
+                        .await?;
                     for key in [227, 25] {
                         keys.insert(key);
                         indigo.send_keyboard(key as u64, ButtonState::Down).await?;

@@ -300,6 +300,17 @@ import SwiftUI
     releaseInputs()
     if session?.paste(text) != true { NSSound.beep() }
   }
+  // `data` is delivered directly by the drop handler (already PNG-encoded), not
+  // read from NSPasteboard.general — the drop payload IS the source, unlike
+  // pasteText() which pastes whatever the Mac already has copied.
+  func pasteImage(_ data: Data) {
+    guard canControl, !data.isEmpty else {
+      NSSound.beep()
+      return
+    }
+    releaseInputs()
+    if session?.pasteImage(data) != true { NSSound.beep() }
+  }
   func updateVideoState() {
     let now = ProcessInfo.processInfo.systemUptime
     // Drain attach/detach notifications before the retry timer; replug skips backoff.

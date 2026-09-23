@@ -12,6 +12,7 @@ I built it for myself because other tools didn’t work for me.
 ## Features
 
 - Mouse, keyboard, scrolling and text paste.
+- Drag an image from the Mac onto the mirror to paste it into whatever's focused on the iPhone (e.g. an iMessage compose field).
 - Screenshots and silent screen recording.
 - Audio playback with mute and volume control.
 - Remote rotation, Home, App Switcher, Spotlight and Control Center.
