@@ -31,10 +31,28 @@ fi
 rm -rf "$app/Contents/Frameworks/Sparkle.framework"
 cp -R "$sparkle_framework" "$app/Contents/Frameworks/Sparkle.framework"
 
-# Local-only signing: ad-hoc, --deep to cover Sparkle's nested helper tools.
-# Not for distribution — real releases need Developer ID signing of each
-# nested component individually (inside-out), Hardened Runtime and
-# notarization; see VALIDATION.md.
-codesign --force --deep --sign - "$app/Contents/Frameworks/Sparkle.framework"
-codesign --force --sign - "$app"
-echo "Built $app"
+# CODESIGN_IDENTITY lets scripts/release.sh produce a properly signed build by
+# setting it to a "Developer ID Application: ..." identity before calling this
+# script. Local dev builds default to ad-hoc, which needs no certificate and
+# is not meant for distribution: Gatekeeper will block it on another Mac.
+identity="${CODESIGN_IDENTITY:--}"
+sign() {
+    if [ "$identity" = "-" ]; then
+        codesign --force --sign "$identity" "$1"
+    else
+        codesign --force --sign "$identity" --options runtime "$1"
+    fi
+}
+# Sign inside-out: Sparkle's nested XPC services and helper tools first, then
+# the framework, then the app last. codesign validates nesting at each step,
+# so signing outside-in produces a bundle that fails notarization.
+sparkle_versioned="$app/Contents/Frameworks/Sparkle.framework/Versions/B"
+find "$sparkle_versioned" -type d -name "*.xpc" -print0 |
+    while IFS= read -r -d '' xpc; do
+        sign "$xpc"
+    done
+sign "$sparkle_versioned/Autoupdate"
+sign "$sparkle_versioned/Updater.app"
+sign "$app/Contents/Frameworks/Sparkle.framework"
+sign "$app"
+echo "Built $app (signed: $identity)"

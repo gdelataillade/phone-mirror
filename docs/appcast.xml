@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Served via GitHub Pages at https://gdelataillade.github.io/phone-mirror/appcast.xml
+     (SUFeedURL in Resources/Info.plist). Generated and updated by scripts/release.sh —
+     do not hand-edit except to fix a mistake in an already-published entry. -->
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
+  xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>iPhoneMirror</title>
+    <link>https://gdelataillade.github.io/phone-mirror/appcast.xml</link>
+    <description>Updates for iPhoneMirror</description>
+    <language>en</language>
+  </channel>
+</rss>

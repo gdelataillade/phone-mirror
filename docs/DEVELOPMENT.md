@@ -4,6 +4,25 @@
 
 Commands below run from the repository root.
 
+## Building from source
+
+Most people should just [download the app](../README.md#try-it). Building
+from source is for development and contributions.
+
+- Install [Rust 1.95+](https://rustup.rs/), then:
+
+```sh
+git clone https://github.com/gdelataillade/phone-mirror.git
+cd phone-mirror
+./scripts/build.sh
+open build/iPhoneMirror.app
+```
+
+`scripts/build.sh` produces an ad-hoc-signed build for local testing —
+Gatekeeper will block it on any other Mac. `scripts/release.sh` produces a
+signed, notarized, distributable build; see the setup notes at the top of
+that script.
+
 ## Structure
 
 - `Sources/iPhoneMirror`: native window, input, lifecycle, decoder and GPU renderer.

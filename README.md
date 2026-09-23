@@ -19,28 +19,21 @@ I built it for myself because other tools didn’t work for me.
 
 ## Incoming features
 
-- Easier setup and a downloadable app.
 - AI-agent access for real-device testing.
 - Wi-Fi support (under investigation).
 
 ## Setup
 
 - Apple silicon Mac: **macOS 27**. iPhone: **iOS 27**.
-- Install [Xcode 27](https://developer.apple.com/xcode/resources/) and complete its initial setup.
+- Install [Xcode 27](https://developer.apple.com/xcode/resources/) and complete its initial setup — this is still required even with the downloadable app below, since the iPhone itself needs to be prepared for it.
 - Connect by USB, [trust your Mac](https://support.apple.com/en-us/109054), and [pair/prepare the phone in Xcode](https://developer.apple.com/documentation/xcode/running-your-app-on-simulated-or-physical-devices).
 - Enable [Developer Mode](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device).
-- Install [Rust 1.95+](https://rustup.rs/).
 
 ## Try it
 
-No downloadable app yet. Build locally:
+[**Download the latest release**](https://github.com/gdelataillade/phone-mirror/releases/latest), open the DMG, and drag iPhoneMirror to Applications.
 
-```sh
-git clone https://github.com/gdelataillade/phone-mirror.git
-cd phone-mirror
-./scripts/build.sh
-open build/iPhoneMirror.app
-```
+The app checks for updates automatically and can check on demand (app menu → Check for Updates…).
 
 Keep your iPhone unlocked, click **Mirror iPhone**, then click the picture to control it.
 

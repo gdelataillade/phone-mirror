@@ -15,5 +15,5 @@
 <key>SUFeedURL</key><string>https://gdelataillade.github.io/phone-mirror/appcast.xml</string>
 <key>SUEnableAutomaticChecks</key><true/>
 <key>SUScheduledCheckInterval</key><integer>86400</integer>
-<!-- SUPublicEDKey goes here once the appcast/signing key exists (release pipeline phase). -->
+<key>SUPublicEDKey</key><string>K7yd8MuC+vmdCZpOV1qHH/VX03Tja9FgVeydHu3S2sQ=</string>
 </dict></plist>
