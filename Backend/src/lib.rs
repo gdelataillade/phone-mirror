@@ -106,7 +106,8 @@ pub struct PMHandle {
 enum Command {
     Input(u32, u32, u32),
     Paste(String),
-    PasteImage(Vec<u8>),
+    // The UTI to set it under: UTI_PNG or UTI_JPEG, chosen by the caller.
+    PasteImage(Vec<u8>, &'static str),
 }
 fn status(tx: &mpsc::SyncSender<PMEvent>, message: &str) {
     let _ = tx.try_send(PMEvent::message(1, message));
@@ -280,14 +281,18 @@ pub unsafe extern "C" fn pm_paste(handle: *mut PMHandle, text: *const u8, length
         0
     }
 }
-// Provisional; not yet validated against the pasteboard service's real limit.
-// See VALIDATION.md once that's been tested live with a large photo.
+// A generous outer safety bound, not the real practical limit: a real 1.3MB PNG
+// photo reliably failed to paste at all (confirmed live, with the transport layer
+// itself ruled out — see VALIDATION.md), while 420KB worked. The Swift side
+// re-encodes to JPEG above a much lower threshold specifically to stay under
+// whatever that real ceiling is; this just guards against truly excessive input.
 const MAX_PASTE_IMAGE_BYTES: usize = 15 * 1024 * 1024;
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pm_paste_image(
     handle: *mut PMHandle,
     bytes: *const u8,
     length: usize,
+    format: u32, // 0 = PNG, 1 = JPEG
 ) -> i32 {
     let Some(h) = (unsafe { handle.as_ref() }) else {
         return 0;
@@ -295,8 +300,9 @@ pub unsafe extern "C" fn pm_paste_image(
     if bytes.is_null() || length == 0 || length > MAX_PASTE_IMAGE_BYTES || *h.cancel.borrow() {
         return 0;
     }
+    let uti = if format == 1 { UTI_JPEG } else { UTI_PNG };
     let data = unsafe { std::slice::from_raw_parts(bytes, length) }.to_vec();
-    if h.commands.try_send(Command::PasteImage(data)).is_ok() {
+    if h.commands.try_send(Command::PasteImage(data, uti)).is_ok() {
         1
     } else {
         let _ = h.cancel.send(true);
@@ -808,6 +814,13 @@ async fn input_loop(
         let cmd = tokio::select! { biased; _=cancelled(&mut stop)=>break, c=commands.recv()=>match c {Some(c)=>c,None=>break} };
         let command_timeout = if matches!(cmd, Command::Input(9 | 10, _, _)) {
             Duration::from_secs(2)
+        } else if matches!(cmd, Command::PasteImage(..)) {
+            // Covers the SET round-trip (large photos can be substantial even after
+            // the Swift-side JPEG fallback), the settle delay, and keyboard sends on
+            // top of it — a command that blows its timeout doesn't just fail, it tears
+            // down and restarts the whole session (see the timeout match below), so
+            // this needs real headroom, not just enough for the happy path.
+            Duration::from_secs(5)
         } else {
             Duration::from_secs(1)
         };
@@ -833,16 +846,24 @@ async fn input_loop(
                     }
                     return Ok(());
                 }
-                Command::PasteImage(bytes) => {
+                Command::PasteImage(bytes, uti) => {
                     release(&mut hid, &mut indigo, surface, &mut touch, &mut keys).await;
                     let Some(pasteboard) = pasteboard.as_mut() else {
                         return Err(idevice::IdeviceError::UnexpectedResponse(
                             "The iPhone pasteboard service is unavailable.".into(),
                         ));
                     };
-                    pasteboard
-                        .set_image(&bytes, UTI_PNG, GENERAL_PASTEBOARD)
-                        .await?;
+                    pasteboard.set_image(&bytes, uti, GENERAL_PASTEBOARD).await?;
+                    // Neither a 300ms nor a 1.5s pause here fixed a real ~1.3MB PNG photo
+                    // pasting nothing while 420KB worked, with the transport layer itself
+                    // already ruled out (set_image's .await blocks until the device acks the
+                    // full flow-controlled HTTP/2 transfer — see xpc/http2/mod.rs). So this
+                    // wasn't a timing problem: something about payloads in that range doesn't
+                    // paste via a hardware-keyboard Cmd+V at all, timing aside. The real fix is
+                    // the Swift side re-encoding to JPEG above a size threshold well under that
+                    // range. Keeping a small settle margin here regardless, since it's cheap and
+                    // wasn't shown to hurt.
+                    tokio::time::sleep(Duration::from_millis(300)).await;
                     for key in [227, 25] {
                         keys.insert(key);
                         indigo.send_keyboard(key as u64, ButtonState::Down).await?;

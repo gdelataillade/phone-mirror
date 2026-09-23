@@ -3,6 +3,7 @@ import CoreImage
 import MetalKit
 import MirrorCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct MirrorSurface: NSViewRepresentable {
   @ObservedObject var model: MirrorModel
@@ -61,6 +62,11 @@ final class MirrorView: MTKView, MTKViewDelegate {
     framebufferOnly = false
     isPaused = false
     preferredFramesPerSecond = 60
+    // A SwiftUI-level .onDrop here was unreliable: this AppKit view is the actual
+    // frontmost view occupying this screen region, and competes with whatever
+    // hidden view SwiftUI installs its own drop target on. Registering directly
+    // on this view is the canonical, reliable way to receive drags.
+    registerForDraggedTypes([.fileURL, NSPasteboard.PasteboardType(UTType.image.identifier)])
     // Matches the bezel's own background (PhoneBezel.swift) so a sub-pixel aspect-fit
     // rounding gap at the content's edge blends in instead of showing as a seam.
     clearColor = MTLClearColorMake(0.045, 0.045, 0.045, 1)
@@ -241,6 +247,83 @@ final class MirrorView: MTKView, MTKViewDelegate {
       endTouch()
       mouseHeld = false
     }
+  }
+  override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+    let canControl = model?.canControl == true
+    if ProcessInfo.processInfo.environment["PM_TRACE"] != nil {
+      traceLog("drop: draggingEntered canControl=\(canControl) types=\(sender.draggingPasteboard.types ?? [])")
+    }
+    return canControl ? .copy : []
+  }
+  // Tries a dropped Finder file first (the stated use case), then falls back to
+  // raw image data for a drag that isn't file-backed (e.g. from a webpage or
+  // Preview). NSPasteboard reads are synchronous, unlike NSItemProvider's
+  // completion-handler API, so this needs no dispatching back to the main
+  // thread — performDragOperation is already called on it.
+  override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+    let trace = ProcessInfo.processInfo.environment["PM_TRACE"] != nil
+    let pasteboard = sender.draggingPasteboard
+    let image: NSImage?
+    if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
+      let url = urls.first
+    {
+      if trace { traceLog("drop: file URL \(url)") }
+      image = NSImage(contentsOf: url)
+    } else if let images = pasteboard.readObjects(forClasses: [NSImage.self], options: nil)
+      as? [NSImage]
+    {
+      if trace { traceLog("drop: raw image data, \(images.count) image(s) on pasteboard") }
+      image = images.first
+    } else {
+      if trace { traceLog("drop: no URL or image found; types=\(pasteboard.types ?? [])") }
+      image = nil
+    }
+    guard let image, let (data, format) = MirrorView.encodedImageData(from: image) else {
+      if trace { traceLog("drop: failed to load or encode an image") }
+      NSSound.beep()
+      return false
+    }
+    if trace { traceLog("drop: pasting \(data.count) \(format) bytes") }
+    let ok = model?.pasteImage(data, format: format) == true
+    if trace { traceLog("drop: pasteImage returned \(ok)") }
+    return ok
+  }
+  // Re-encodes to a well-formed PNG or JPEG regardless of source format, so the
+  // native layer only ever has to handle two known encodings. PNG (lossless) is
+  // preferred, but a real ~1.3MB PNG photo reliably failed to paste at all while
+  // 420KB worked — confirmed live, with the transport layer itself ruled out as
+  // the cause (see VALIDATION.md) — so anything bigger downscales and re-encodes
+  // as JPEG instead. Downscaling matters, not just switching format: a full-
+  // resolution 3024×4032 iPhone photo is still ~1MB+ as JPEG even at 0.85
+  // quality — bigger than the confirmed-failing size — while capping the long
+  // edge at 1600px lands comfortably under the confirmed-working size with
+  // real margin, and iMessage's own default photo sharing already downscales
+  // similarly, so this isn't a quality regression for the stated use case.
+  private static let jpegFallbackThreshold = 500_000
+  private static let jpegMaxDimension: CGFloat = 1600
+  private static func encodedImageData(from image: NSImage) -> (Data, ImageFormat)? {
+    guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else {
+      return nil
+    }
+    if let png = rep.representation(using: .png, properties: [:]),
+      png.count <= jpegFallbackThreshold
+    {
+      return (png, .png)
+    }
+    let source = image.size
+    let scale = min(1, jpegMaxDimension / max(source.width, source.height))
+    let target = NSSize(width: source.width * scale, height: source.height * scale)
+    let resized = NSImage(size: target)
+    resized.lockFocus()
+    image.draw(
+      in: NSRect(origin: .zero, size: target), from: NSRect(origin: .zero, size: source),
+      operation: .copy, fraction: 1)
+    resized.unlockFocus()
+    guard let resizedTiff = resized.tiffRepresentation,
+      let resizedRep = NSBitmapImageRep(data: resizedTiff),
+      let jpeg = resizedRep.representation(using: .jpeg, properties: [.compressionFactor: 0.85])
+    else { return nil }
+    return (jpeg, .jpeg)
   }
   override func scrollWheel(with event: NSEvent) {
     synchronizeIfNeeded()

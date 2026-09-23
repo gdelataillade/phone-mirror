@@ -706,3 +706,76 @@ Paste" prompt recurs every drop or is remembered for some period after the
 first approval, and dropping a non-image file (should fail silently via
 the existing beep-on-failure path, matching `pasteText()`, but not yet
 confirmed live).
+
+## Drag-and-drop follow-up: real Finder drags, then a real size ceiling, 23 September
+
+The synthetic-drag verification above proved the mechanism *could* work,
+but real usage (the user's own Mac, real Finder, real photos) surfaced two
+genuine bugs it hadn't caught — both found and fixed only because the user
+kept testing after "looks done" and reporting exactly what happened.
+
+**Bug 1 — the drop target was unreliable.** A real Finder drag frequently
+didn't register at all. Root cause: SwiftUI's `.onDrop` was installed on a
+`ZStack` that also contains the custom Metal `NSViewRepresentable`
+(`MirrorView`), which already does its own raw mouse/keyboard capture for
+touch simulation — the two compete for the same screen region, and which
+one AppKit actually asks to handle an incoming drag isn't reliably
+SwiftUI's drop target. Fixed by implementing `NSDraggingDestination`
+directly on `MirrorView` itself (`registerForDraggedTypes`,
+`draggingEntered`, `performDragOperation`) and removing the SwiftUI-level
+`.onDrop` entirely, so there's exactly one drop handler, on the view that
+is actually frontmost at that screen location. `NSPasteboard.readObjects`
+is synchronous, unlike `NSItemProvider`'s completion-handler API, which
+also simplified the handler.
+
+Verifying this live was messier than expected and worth recording:
+several apparent failures during investigation turned out to be self-
+inflicted — Finder's alphabetical sort shifting rows after new scratch
+files were created in the same watched folder (dragged the wrong file),
+a background `swiftc` compile stealing frontmost-app focus mid-sequence
+(clicks landed on the wrong app), and a genuine session disconnect
+partway through. None of these were bugs in the app. Eventually asked the
+user to just test it directly rather than continuing to chase synthetic
+repro — correctly: their real test immediately produced a clean,
+reproducible signal synthetic testing hadn't.
+
+**Bug 2 — a real size ceiling, unrelated to Bug 1.** With the drop target
+fixed, PM_TRACE logs showed *every* attempt succeeding on the Mac side
+(`pasteImage returned true`) while nothing visibly landed on the phone.
+The user's own real files pinned it down precisely: a 420,921-byte PNG
+worked, a 1,379,688-byte PNG never did, however long the delay. Two wrong
+theories tried and disproven first:
+- *"Needs to settle after the SET ack"* — 300ms, then 1.5s delay between
+  `pasteboard.set_image()` and the paste keystroke. Neither helped the
+  large file. Also ruled out the transport layer itself as the cause:
+  `xpc/http2/mod.rs` already chunks to 16KB frames and correctly respects
+  HTTP/2 flow-control windows specifically for large pasteboard payloads
+  (per its own comments) — `set_image().await` only returns after the
+  device has acknowledged the full transfer, so the bytes had genuinely
+  arrived either way.
+- *Consequence, not a theory*: the 1.5s delay exceeded the main command
+  loop's default 1-second `command_timeout` (`Backend/src/lib.rs`) — a
+  command that doesn't finish in its budget doesn't just fail, the whole
+  loop `break`s and the session tears down and reconnects. This produced
+  a new, worse symptom ("the mirror session ends and restarts") that had
+  nothing to do with pasting. Fixed by giving `Command::PasteImage` its
+  own 5-second budget, same pattern as rotation's existing 2-second
+  allowance — real headroom, not just enough for the happy path.
+
+With timing ruled out, the actual fix: PNG is a poor format for
+photographic content specifically (lossless, so it encodes far larger
+than JPEG for the same photo) — but switching format alone wasn't
+sufficient either, confirmed via a local, offline size check (no
+app/device involved) before handing anything back for another live test:
+a full-resolution 3024×4032 photo was still ~1MB+ as JPEG even at 0.85
+quality, bigger than the confirmed-failing file. Capping the long edge at
+1600px before JPEG-encoding brought a realistic photo down to roughly
+300KB in that same offline check, comfortably under the confirmed-working
+size. `pm_paste_image` now takes a `format` parameter (`ImageFormat.png`/
+`.jpeg`, `Backend.swift`); `MirrorSurface.encodedImageData(from:)` tries
+PNG first and only downscales + re-encodes as JPEG above a size threshold,
+so small/simple images (icons, screenshots) still paste losslessly.
+
+Confirmed fixed: the user re-tested with the exact file that had been
+failing throughout (`icon.png`, the 1,379,688-byte PNG) and it now pastes
+successfully.

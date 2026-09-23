@@ -300,16 +300,19 @@ import SwiftUI
     releaseInputs()
     if session?.paste(text) != true { NSSound.beep() }
   }
-  // `data` is delivered directly by the drop handler (already PNG-encoded), not
-  // read from NSPasteboard.general — the drop payload IS the source, unlike
-  // pasteText() which pastes whatever the Mac already has copied.
-  func pasteImage(_ data: Data) {
+  // `data` is delivered directly by the drop handler, not read from
+  // NSPasteboard.general — the drop payload IS the source, unlike pasteText()
+  // which pastes whatever the Mac already has copied.
+  @discardableResult
+  func pasteImage(_ data: Data, format: ImageFormat) -> Bool {
     guard canControl, !data.isEmpty else {
       NSSound.beep()
-      return
+      return false
     }
     releaseInputs()
-    if session?.pasteImage(data) != true { NSSound.beep() }
+    let ok = session?.pasteImage(data, format: format) == true
+    if !ok { NSSound.beep() }
+    return ok
   }
   func updateVideoState() {
     let now = ProcessInfo.processInfo.systemUptime

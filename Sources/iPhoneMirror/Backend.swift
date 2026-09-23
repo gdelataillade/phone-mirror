@@ -12,6 +12,11 @@ struct DeviceList: Codable {
   let devices: [PhoneDevice]
   let error: String?
 }
+// Matches pm_paste_image's `format` parameter (PhoneMirror.h) exactly.
+enum ImageFormat: UInt32 {
+  case png = 0
+  case jpeg = 1
+}
 
 /// Main-actor owner; polling never waits for USB or device services.
 final class USBPresenceMonitor {
@@ -236,15 +241,16 @@ final class NativeSession: @unchecked Sendable {
     guard !cancelled, let handle else { return false }
     return bytes.withUnsafeBufferPointer { pm_paste(handle, $0.baseAddress, $0.count) == 1 }
   }
-  // `data` must already be PNG-encoded; the native layer sends it to the device
-  // pasteboard as-is under the PNG UTI.
-  func pasteImage(_ data: Data) -> Bool {
+  // `data` must already be encoded as `format`; the native layer sends it to the
+  // device pasteboard as-is under the matching UTI.
+  func pasteImage(_ data: Data, format: ImageFormat) -> Bool {
     guard !data.isEmpty, data.count <= 15 * 1024 * 1024 else { return false }
     lock.lock()
     defer { lock.unlock() }
     guard !cancelled, let handle else { return false }
     return data.withUnsafeBytes {
-      pm_paste_image(handle, $0.bindMemory(to: UInt8.self).baseAddress, $0.count) == 1
+      pm_paste_image(
+        handle, $0.bindMemory(to: UInt8.self).baseAddress, $0.count, format.rawValue) == 1
     }
   }
   static func discover(completion: @escaping (DeviceList) -> Void) {

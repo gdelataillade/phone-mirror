@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 @main struct iPhoneMirrorApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -106,7 +105,6 @@ struct MirrorWindow: View {
   @AppStorage("showDeviceBezel") private var showDeviceBezel = true
   @ObservedObject var model: MirrorModel
   @ObservedObject var updater: Updater
-  @State private var isDropTargeted = false
   var body: some View {
     VStack(spacing: 0) {
       // Plain, always-visible buttons: NSToolbar items and Menus proved unreliable
@@ -193,12 +191,7 @@ struct MirrorWindow: View {
             Spacer()
           }.allowsHitTesting(false)
         }
-        if isDropTargeted {
-          RoundedRectangle(cornerRadius: 12).stroke(Color.accentColor, lineWidth: 3)
-            .padding(4).allowsHitTesting(false)
-        }
       }
-      .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted, perform: handleImageDrop)
       if model.hasPicture {
         Divider()
         HStack(spacing: 16) {
@@ -262,42 +255,6 @@ struct MirrorWindow: View {
     } message: {
       Text(model.rotationNotice ?? "")
     }
-  }
-  // Tries a dropped Finder file first (the stated use case), then falls back to
-  // raw image data for a drag that isn't file-backed (e.g. from a webpage or
-  // Preview). Completion handlers run off the main thread; every path back into
-  // `model` or AppKit is dispatched back to it.
-  private func handleImageDrop(_ providers: [NSItemProvider]) -> Bool {
-    guard let provider = providers.first else { return false }
-    if provider.canLoadObject(ofClass: URL.self) {
-      _ = provider.loadObject(ofClass: URL.self) { url, _ in
-        guard let url, let image = NSImage(contentsOf: url), let png = pngData(from: image) else {
-          DispatchQueue.main.async { NSSound.beep() }
-          return
-        }
-        DispatchQueue.main.async { model.pasteImage(png) }
-      }
-      return true
-    }
-    if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
-      provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
-        guard let data, let image = NSImage(data: data), let png = pngData(from: image) else {
-          DispatchQueue.main.async { NSSound.beep() }
-          return
-        }
-        DispatchQueue.main.async { model.pasteImage(png) }
-      }
-      return true
-    }
-    return false
-  }
-  // Always re-encodes to PNG regardless of the source format, so the native
-  // layer only ever has to handle one well-formed encoding.
-  private func pngData(from image: NSImage) -> Data? {
-    guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else {
-      return nil
-    }
-    return rep.representation(using: .png, properties: [:])
   }
   private var speakerIcon: String {
     guard !model.audioMuted else { return "speaker.slash.fill" }
