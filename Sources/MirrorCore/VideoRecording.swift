@@ -4,7 +4,7 @@ import Foundation
 
 /// All writer operations run on one queue; a single pending frame bounds memory.
 public final class VideoRecording: @unchecked Sendable {
-  private let queue = DispatchQueue(label: "PhoneMirror.recording", qos: .userInitiated)
+  private let queue = DispatchQueue(label: "iPhoneMirror.recording", qos: .userInitiated)
   private let slot = DispatchSemaphore(value: 1)
   private let writer: AVAssetWriter
   private let input: AVAssetWriterInput
@@ -123,6 +123,6 @@ public final class VideoRecording: @unchecked Sendable {
   }
 
   private static func error(_ text: String) -> NSError {
-    NSError(domain: "PhoneMirror.Recording", code: 1, userInfo: [NSLocalizedDescriptionKey: text])
+    NSError(domain: "iPhoneMirror.Recording", code: 1, userInfo: [NSLocalizedDescriptionKey: text])
   }
 }

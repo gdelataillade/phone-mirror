@@ -43,7 +43,7 @@ struct ConnectionDiagnosticsView: View {
     let report = model.diagnosticReport
     let panel = NSSavePanel()
     panel.allowedContentTypes = [.plainText]
-    panel.nameFieldStringValue = "PhoneMirror-diagnostics.txt"
+    panel.nameFieldStringValue = "iPhoneMirror-diagnostics.txt"
     panel.begin { response in
       guard response == .OK, let url = panel.url else { return }
       do { try report.write(to: url, atomically: true, encoding: .utf8) } catch {

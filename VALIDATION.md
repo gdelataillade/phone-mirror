@@ -150,7 +150,7 @@ For the next live check, unlock the phone and keep it awake:
    are not sufficient to validate landscape coordinates. Rotation lock must be
    off for this test; the app does not change it.
 4. Resize the Mac window and press Command–0. Repeat taps near the picture edges.
-   While typing in Search, switch away from PhoneMirror and release Shift; return
+   While typing in Search, switch away from iPhoneMirror and release Shift; return
    and check that ordinary typing is not shifted or repeated unexpectedly.
 5. Try Home and App Switcher, then return to Settings. Use Command–Escape during
    a gesture and confirm there is no continuing touch or held key.
@@ -249,7 +249,7 @@ Locked-phone mirroring and unlocking the phone are outside the supported scope.
 
 ## Manual device checklist
 
-Open `build/PhoneMirror.app`, connect by USB, unlock the iPhone and choose
+Open `build/iPhoneMirror.app`, connect by USB, unlock the iPhone and choose
 **Mirror iPhone**. Keep a harmless screen such as Settings visible.
 
 1. **Cable:** unplug briefly, reconnect and unlock. Also leave the cable unplugged
@@ -299,7 +299,7 @@ results above replace that earlier unverified recovery status.
 - Camera button opened Save; Cancel returned to mirroring and re-enabled capture.
 - Test images remain outside the repository. No screenshot was published.
 - Live landscape screenshots and protected-content behavior remain unverified.
-  To check landscape, open a harmless Safari page, rotate using PhoneMirror,
+  To check landscape, open a harmless Safari page, rotate using iPhoneMirror,
   save a screenshot and verify its orientation in Preview. Return to portrait
   and repeat. Copy with Shift–Command–C, then use Preview → File → New from
   Clipboard to verify pasting. Captures use stream resolution, not a separate
@@ -333,7 +333,7 @@ results above replace that earlier unverified recovery status.
 - Release build, signature verification and diff whitespace checks pass.
 - Live header pin and Option–Command–T switch the mirror's actual window level
   between floating (3) and normal (0). Read-only window-order inspection while
-  another app was foreground showed PhoneMirror above Finder when pinned and
+  another app was foreground showed iPhoneMirror above Finder when pinned and
   below Finder after unpinning.
 - Enabled preference survived Quit and relaunch. Shortcut also worked with the
   mirrored iPhone focused. Screenshot Save remained accessible while pinned;
@@ -342,7 +342,7 @@ results above replace that earlier unverified recovery status.
   performed in the built app. Other Spaces and full-screen apps were not tested.
 - To reproduce: click the header pin, activate another ordinary window on the
   same desktop, then toggle off with Option–Command–T and activate that window
-  again. Restart PhoneMirror to check preference persistence.
+  again. Restart iPhoneMirror to check preference persistence.
 
 ## App icon, 18 September
 
@@ -522,3 +522,104 @@ per-device. If a different iPhone model later shows a different (or no)
 border, this constant is the place to revisit — ideally by finding an
 authoritative per-device source for the true content size rather than a
 fixed offset.
+
+## Renamed to iPhoneMirror; Sparkle wired in, 22 September
+
+Renamed the app, product and executable target from PhoneMirror to
+iPhoneMirror (bundle ID now `me.gdelataillade.iPhoneMirror`), ahead of the
+first signed/notarized release — this has to happen before anyone installs,
+since the bundle ID keys `UserDefaults` and the future updater feed.
+`Sources/PhoneMirror` moved to `Sources/iPhoneMirror` and the app's own
+entry-point file, window title, panel filenames, DispatchQueue labels and
+usbmuxd client label were updated to match. Left two internal-only
+identifiers unchanged since they're invisible to users and renaming adds
+pure churn: the Rust crate (`phone_mirror_backend`) and the CMirror bridge
+header (`PhoneMirror.h`).
+
+Added the Sparkle framework (2.10.0, via SPM) for future self-updating:
+`Sources/iPhoneMirror/Updater.swift` wraps `SPUStandardUpdaterController`,
+exposed as a `Check for Updates…` app-menu item and an in-window header
+button (`arrow.down.circle`) — the in-window button exists because of the
+menu/toolbar click-dispatch bug noted above, so there's a reliable manual
+path even if the menu item doesn't register a click. `Package.swift` needed
+`-Xlinker -rpath -Xlinker @executable_path/../Frameworks` (plain `-rpath`
+fails: swiftc rejects it unless routed through `-Xlinker`) so the built
+binary can find the framework at runtime. `scripts/build.sh` locates
+`Sparkle.framework` under `.build/`, copies it into `Contents/Frameworks`,
+and at this point ad-hoc-signed it with `--deep` before signing the app —
+local-only, not a distribution signing strategy. This was later replaced
+with proper inside-out signing of each nested component individually; see
+"Release pipeline" below.
+
+At this point `SUFeedURL` pointed at a GitHub Pages URL that didn't serve an
+appcast yet, and `SUPublicEDKey` was deliberately left out entirely rather
+than filled with a placeholder, so an update check failed cleanly (visibly,
+in Sparkle's own UI) instead of silently trusting nothing. Both were filled
+in once real values existed; see "Release pipeline" below.
+
+Verified live: built clean, launched, confirmed no dyld/missing-framework
+crash, reconnected to a live iPhone, and confirmed the renamed window, all
+existing controls and the new update button render and lay out correctly at
+the default window size. Did not click-test the update button itself (its
+own action is a single trivial call into Sparkle; the meaningful risk was
+whether linking and embedding the framework broke the app, which launching
+successfully already rules out) — actually checking an update requires the
+appcast/signing key work above first.
+
+## Release pipeline: signing, DMG, notarization, appcast, 22–23 September
+
+Generated the Sparkle EdDSA signing keypair with `generate_keys --account
+iPhoneMirror`; the private key lives only in the login keychain (never
+written to disk or the repo) and `SUPublicEDKey` in `Resources/Info.plist`
+now holds the real public key. `sign_update`'s first real use triggers a
+one-time macOS Keychain access prompt that blocks forever with nothing
+there to click it — including a non-interactive release run — so this
+needs clearing once, interactively, before `scripts/release.sh` can run
+unattended; done and confirmed (`sign_update` now signs instantly, no
+prompt).
+
+Replaced `scripts/build.sh`'s ad-hoc `--deep` Sparkle-framework signing with
+proper inside-out signing of each nested component (XPC services, then
+`Autoupdate`, then `Updater.app`, then the framework, then the app), gated
+by a `CODESIGN_IDENTITY` env var so the same script produces either a local
+ad-hoc build (default) or a real Developer ID build depending on what's
+set. `set -u` originally broke on an empty `runtime_flags=()` array
+expansion — macOS ships bash 3.2, which mishandles that — fixed by using a
+plain conditional `sign()` function instead of an array. Verified: rebuilt
+ad-hoc, `codesign --verify --deep --strict` passed, app still launched.
+
+Wrote `scripts/release.sh`: version bump, signed build, notarize/staple the
+app, build/sign/notarize/staple the DMG, re-zip and sign the Sparkle
+enclosure, append an appcast entry, commit, push, then publish the GitHub
+Release pinned to that exact commit via `--target` (an earlier version
+called `gh release create` before committing, so the tag would have pointed
+at the pre-release commit and missed both the version bump and the appcast
+entry — caught in PR review, fixed by reordering). `pubDate` generation
+forces `LC_ALL=C` so the RFC-2822-style date stays in English regardless of
+the machine's locale (arm64 `date`'s `%a`/`%b` are locale-dependent; this
+was also caught in review — verified by checking `date` was not otherwise
+forced to a locale anywhere else the appcast touches).
+
+Tested independently, since a full release needs a Developer ID certificate
+and notarization credentials that didn't exist yet when most of this was
+written (both were added afterward, by the user, following the setup notes
+at the top of `release.sh`):
+- DMG creation (`hdiutil create` + verify + mount + contents check) — works.
+- The appcast item-insertion Python block, run twice against a scratch copy
+  of `docs/appcast.xml` to simulate two consecutive releases — newest-first
+  ordering, explanatory header comment, and indentation all survive
+  correctly; output is valid XML both times.
+- `sign_update docs/appcast.xml` genuinely signs the file in place (not a
+  no-op printing to stdout, which a review comment initially assumed): it
+  rewrites the file with a `sparkle-sign-warning` comment near the top and
+  an embedded `sparkle-signatures` comment (edSignature + length) at the
+  end. Confirmed by diffing the file before/after on a scratch copy.
+
+Not yet tested: a real end-to-end `scripts/release.sh` run (signed build →
+notarization → DMG → GitHub Release → appcast publish, all together). The
+three prerequisites (Developer ID certificate, notarization credentials,
+Keychain approval) are now all in place, so this is the next concrete step,
+not a blocker.
+
+GitHub Pages is enabled (source: `/docs` on `main`), so `SUFeedURL` will
+resolve once this branch's `docs/appcast.xml` reaches `main`.

@@ -12,7 +12,7 @@ xcrun swiftc -parse-as-library -module-cache-path "$CLANG_MODULE_CACHE_PATH" \
   -Xlinker -rpath -Xlinker @executable_path \
   -L Backend/target/release -lphone_mirror_backend \
   -framework Security -framework SystemConfiguration \
-  Sources/PhoneMirror/Decoder.swift Sources/PhoneMirror/Backend.swift \
-  Sources/PhoneMirror/MirrorModel.swift Sources/PhoneMirror/Recording.swift Diagnostics/ConnectionProbe.swift \
+  Sources/iPhoneMirror/Decoder.swift Sources/iPhoneMirror/Backend.swift \
+  Sources/iPhoneMirror/MirrorModel.swift Sources/iPhoneMirror/Recording.swift Diagnostics/ConnectionProbe.swift \
   -o .build/diagnostics/connection-probe
 exec .build/diagnostics/connection-probe "$@"

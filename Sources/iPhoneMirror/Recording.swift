@@ -27,7 +27,7 @@ import UniformTypeIdentifiers
     panel.message = "Silent video. Recording starts after you choose Save."
     let formatter = DateFormatter()
     formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
-    panel.nameFieldStringValue = "PhoneMirror \(formatter.string(from: Date())).mov"
+    panel.nameFieldStringValue = "iPhoneMirror \(formatter.string(from: Date())).mov"
     panel.begin { [weak self, weak model] response in
       guard let self else { return }
       self.panel = nil

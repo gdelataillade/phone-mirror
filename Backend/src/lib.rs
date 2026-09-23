@@ -54,7 +54,7 @@ pub async fn devices() -> Result<serde_json::Value> {
         .into_iter()
         .filter(|d| d.connection_type == Connection::Usb)
     {
-        let provider = device.to_provider(UsbmuxdAddr::default(), "PhoneMirror");
+        let provider = device.to_provider(UsbmuxdAddr::default(), "iPhoneMirror");
         let mut name = "iPhone".to_string();
         let mut version = String::new();
         if let Ok(mut lockdown) =
@@ -322,7 +322,7 @@ async fn run(
             .into_iter()
             .find(|d| d.udid == udid && d.connection_type == Connection::Usb)
             .ok_or("Connect this iPhone by USB and unlock it.")?;
-        let provider = device.to_provider(UsbmuxdAddr::default(), "PhoneMirror");
+        let provider = device.to_provider(UsbmuxdAddr::default(), "iPhoneMirror");
         status(tx, "Opening developer services…");
         health::stage(health, 2);
         let proxy = bounded(

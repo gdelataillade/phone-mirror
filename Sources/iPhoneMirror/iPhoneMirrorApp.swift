@@ -1,14 +1,15 @@
 import AppKit
 import SwiftUI
 
-@main struct PhoneMirrorApp: App {
+@main struct iPhoneMirrorApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
   @StateObject private var model = MirrorModel()
+  @StateObject private var updater = Updater()
   @AppStorage("alwaysOnTop") private var alwaysOnTop = false
   @AppStorage("showDeviceBezel") private var showDeviceBezel = true
   var body: some Scene {
-    Window("PhoneMirror", id: "mirror") {
-      MirrorWindow(model: model)
+    Window("iPhoneMirror", id: "mirror") {
+      MirrorWindow(model: model, updater: updater)
         .frame(minWidth: 360, minHeight: model.isLandscape ? 360 : 580)
         .onAppear {
           appDelegate.model = model
@@ -19,6 +20,10 @@ import SwiftUI
     }
     .defaultSize(width: 440, height: 820)
     .commands {
+      CommandGroup(after: .appInfo) {
+        Button("Check for Updates…") { updater.checkForUpdates() }
+          .disabled(!updater.canCheckForUpdates)
+      }
       CommandGroup(replacing: .newItem) {}
       CommandGroup(replacing: .pasteboard) {
         Button("Paste Text to iPhone") { model.pasteText() }.keyboardShortcut("v").disabled(
@@ -99,6 +104,7 @@ struct MirrorWindow: View {
   @AppStorage("alwaysOnTop") private var alwaysOnTop = false
   @AppStorage("showDeviceBezel") private var showDeviceBezel = true
   @ObservedObject var model: MirrorModel
+  @ObservedObject var updater: Updater
   var body: some View {
     VStack(spacing: 0) {
       // Plain, always-visible buttons: NSToolbar items and Menus proved unreliable
@@ -123,6 +129,15 @@ struct MirrorWindow: View {
         .help(showDeviceBezel ? "Hide iPhone Bezel ⌥⌘B" : "Show iPhone Bezel ⌥⌘B")
         .accessibilityLabel("iPhone Bezel")
         .accessibilityValue(showDeviceBezel ? "On" : "Off")
+        Button {
+          updater.checkForUpdates()
+        } label: {
+          Image(systemName: "arrow.down.circle")
+        }
+        .buttonStyle(.plain)
+        .help("Check for Updates…")
+        .accessibilityLabel("Check for Updates")
+        .disabled(!updater.canCheckForUpdates)
         if model.hasPicture {
           Button {
             model.audioMuted.toggle()
@@ -215,7 +230,7 @@ struct MirrorWindow: View {
     .background(.regularMaterial)
     .background(MirrorWindowLevel(alwaysOnTop: alwaysOnTop).allowsHitTesting(false))
     .background(WindowGlassBackground().allowsHitTesting(false))
-    .navigationTitle(model.selected?.name ?? "PhoneMirror")
+    .navigationTitle(model.selected?.name ?? "iPhoneMirror")
     .navigationSubtitle(model.selected.map { "iOS \($0.version)" } ?? "")
     .alert(
       "Could not capture screenshot",

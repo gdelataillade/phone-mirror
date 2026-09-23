@@ -29,8 +29,8 @@ final class NativeSession: @unchecked Sendable {
   private var cancelled = false
   private var health = SessionHealth()
   private var lastOutput: TimeInterval?
-  private let queue = DispatchQueue(label: "PhoneMirror.native", qos: .userInteractive)
-  private let audioQueue = DispatchQueue(label: "PhoneMirror.audio", qos: .userInteractive)
+  private let queue = DispatchQueue(label: "iPhoneMirror.native", qos: .userInteractive)
+  private let audioQueue = DispatchQueue(label: "iPhoneMirror.audio", qos: .userInteractive)
   private let beforeDecode: (() -> Void)?
   var event: ((UInt32, String) -> Void)?
   // Protected by `lock`: startAudioLoop assigns it once AudioPlayback exists, and
