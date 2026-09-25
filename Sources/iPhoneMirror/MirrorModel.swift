@@ -23,6 +23,18 @@ import SwiftUI
   @Published var screenshotBusy = false
   @Published var screenshotNotice: String?
   @Published var screenshotError: String?
+  @Published var automationEnabled = false
+  @Published var automationBusy = false
+  @Published var automationStatus = "Agent access off"
+  // Persisted; AutomationPort.automatic picks a free port on every enable.
+  @Published var automationPort: Int =
+    UserDefaults.standard.integer(forKey: "automationPort")
+  {
+    didSet { UserDefaults.standard.set(automationPort, forKey: "automationPort") }
+  }
+  var automationCapturing = false
+  var automationAppRequest = false
+  var automationServer: AutomationServer?
   // Defaults to muted: audio only starts once someone explicitly opts in.
   @Published var audioMuted: Bool =
     (UserDefaults.standard.object(forKey: "audioMuted") as? Bool)

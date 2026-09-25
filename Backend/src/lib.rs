@@ -21,6 +21,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{mpsc as async_mpsc, watch};
+mod apps;
 mod health;
 mod orientation;
 mod presence;
@@ -100,6 +101,7 @@ pub struct PMHandle {
     events: Mutex<mpsc::Receiver<PMEvent>>,
     audio_events: Mutex<mpsc::Receiver<PMEvent>>,
     commands: async_mpsc::Sender<Command>,
+    apps: async_mpsc::Sender<apps::Request>,
     cancel: watch::Sender<bool>,
     worker: Option<thread::JoinHandle<()>>,
 }
@@ -143,6 +145,8 @@ pub unsafe extern "C" fn pm_start(udid: *const c_char) -> *mut PMHandle {
     // consumer side can never starve audio delivery, or the reverse.
     let (audio_tx, audio_rx) = mpsc::sync_channel(48);
     let (command_tx, command_rx) = async_mpsc::channel(64);
+    // One app request queued behind the one running; the Swift side serializes too.
+    let (apps_tx, apps_rx) = async_mpsc::channel(1);
     let (cancel_tx, cancel_rx) = watch::channel(false);
     let health = Arc::new(Mutex::new(health::Health::default()));
     let worker_health = health.clone();
@@ -153,6 +157,7 @@ pub unsafe extern "C" fn pm_start(udid: *const c_char) -> *mut PMHandle {
                 &tx,
                 &audio_tx,
                 command_rx,
+                apps_rx,
                 cancel_rx,
                 &worker_health,
             ))
@@ -172,6 +177,7 @@ pub unsafe extern "C" fn pm_start(udid: *const c_char) -> *mut PMHandle {
         events: Mutex::new(rx),
         audio_events: Mutex::new(audio_rx),
         commands: command_tx,
+        apps: apps_tx,
         cancel: cancel_tx,
         worker: Some(worker),
     }))
@@ -309,6 +315,77 @@ pub unsafe extern "C" fn pm_paste_image(
         0
     }
 }
+/// An in-flight app request. Owns only its reply channel, never the session handle,
+/// so waiting on it cannot block pm_cancel or pm_close.
+pub struct PMAppCall {
+    reply: mpsc::Receiver<apps::Reply>,
+}
+fn resolved(reply: apps::Reply) -> *mut PMAppCall {
+    let (tx, rx) = mpsc::sync_channel(1);
+    let _ = tx.send(reply);
+    Box::into_raw(Box::new(PMAppCall { reply: rx }))
+}
+/// Nonblocking. Returns null only for a null handle; every other failure is
+/// reported by pm_app_wait. Unlike input, a full app queue never cancels the session.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pm_app_start(
+    handle: *mut PMHandle,
+    request: *const c_char,
+) -> *mut PMAppCall {
+    let Some(h) = (unsafe { handle.as_ref() }) else {
+        return std::ptr::null_mut();
+    };
+    if request.is_null() {
+        return resolved(Err((400, "Invalid app request".into())));
+    }
+    let Ok(text) = unsafe { CStr::from_ptr(request) }.to_str() else {
+        return resolved(Err((400, "Invalid app request".into())));
+    };
+    let op = match apps::parse(text) {
+        Ok(op) => op,
+        Err(message) => return resolved(Err((400, message))),
+    };
+    if *h.cancel.borrow() {
+        return resolved(Err((503, "The iPhone session closed.".into())));
+    }
+    let (tx, rx) = mpsc::sync_channel(1);
+    match h.apps.try_send(apps::Request { op, reply: tx }) {
+        Ok(()) => Box::into_raw(Box::new(PMAppCall { reply: rx })),
+        Err(async_mpsc::error::TrySendError::Full(_)) => {
+            resolved(Err((429, "Another app request is running.".into())))
+        }
+        Err(async_mpsc::error::TrySendError::Closed(_)) => {
+            resolved(Err((503, "The iPhone session closed.".into())))
+        }
+    }
+}
+/// Blocks up to timeout_ms (at most 30 s), then frees call. Returns JSON
+/// {"status":200,"result":{…}} or {"status":4xx/5xx,"error":"…"}; free with pm_string_free.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pm_app_wait(call: *mut PMAppCall, timeout_ms: u32) -> *mut c_char {
+    if call.is_null() {
+        return std::ptr::null_mut();
+    }
+    let call = unsafe { Box::from_raw(call) };
+    let timeout = Duration::from_millis(timeout_ms.min(30_000) as u64);
+    let reply = match call.reply.recv_timeout(timeout) {
+        Ok(reply) => reply,
+        Err(mpsc::RecvTimeoutError::Timeout) => Err((
+            504,
+            "The iPhone did not answer in time. Observe before retrying.".into(),
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err((503, "The iPhone session closed.".into()))
+        }
+    };
+    let body = match reply {
+        Ok(result) => serde_json::json!({ "status": 200, "result": result }),
+        Err((status, error)) => serde_json::json!({ "status": status, "error": error }),
+    };
+    CString::new(body.to_string())
+        .unwrap_or_default()
+        .into_raw()
+}
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pm_cancel(handle: *mut PMHandle) {
     if let Some(h) = unsafe { handle.as_ref() } {
@@ -340,6 +417,7 @@ async fn run(
     tx: &mpsc::SyncSender<PMEvent>,
     audio_tx: &mpsc::SyncSender<PMEvent>,
     commands: async_mpsc::Receiver<Command>,
+    app_requests: async_mpsc::Receiver<apps::Request>,
     mut cancel: watch::Receiver<bool>,
     health: &health::SharedHealth,
 ) -> Result<()> {
@@ -387,6 +465,7 @@ async fn run(
         tx,
         audio_tx,
         commands,
+        app_requests,
         cancel.clone(),
         health,
     )
@@ -435,6 +514,7 @@ async fn stream(
     tx: &mpsc::SyncSender<PMEvent>,
     audio_tx: &mpsc::SyncSender<PMEvent>,
     commands: async_mpsc::Receiver<Command>,
+    app_requests: async_mpsc::Receiver<apps::Request>,
     cancel: watch::Receiver<bool>,
     health: &health::SharedHealth,
 ) -> Result<()> {
@@ -589,6 +669,7 @@ async fn stream(
         input_stop_rx.clone(),
     ));
     let (refresh_tx, mut refresh_rx) = async_mpsc::channel(1);
+    let input_stop_rx_for_apps = input_stop_rx.clone();
     let input = tokio::spawn(input_loop(
         hid,
         indigo,
@@ -599,6 +680,12 @@ async fn stream(
         refresh_tx,
         rotation,
         tx.clone(),
+    ));
+    let app_worker = tokio::spawn(apps::run(
+        adapter.clone(),
+        rsd.clone(),
+        app_requests,
+        input_stop_rx_for_apps,
     ));
     let mut assembler = HevcAccessUnitAssembler::new(negotiated.payload_type, negotiated.ssrc);
     let mut timer = tokio::time::interval(Duration::from_millis(50));
@@ -724,6 +811,7 @@ async fn stream(
     }
     let _ = input_stop_tx.send(true);
     let _ = orientation_worker.await;
+    let _ = app_worker.await;
     metrics.publish(health);
     let _ = input.await; // Held inputs are released before stopping the owned media session.
     result
@@ -853,7 +941,9 @@ async fn input_loop(
                             "The iPhone pasteboard service is unavailable.".into(),
                         ));
                     };
-                    pasteboard.set_image(&bytes, uti, GENERAL_PASTEBOARD).await?;
+                    pasteboard
+                        .set_image(&bytes, uti, GENERAL_PASTEBOARD)
+                        .await?;
                     // Neither a 300ms nor a 1.5s pause here fixed a real ~1.3MB PNG photo
                     // pasting nothing while 420KB worked, with the transport layer itself
                     // already ruled out (set_image's .await blocks until the device acks the
@@ -961,6 +1051,16 @@ async fn input_loop(
                         }
                     }
                 }
+                // A fixed set of hardware buttons by ID; never an arbitrary HID usage.
+                13 => {
+                    let Some((page, usage)) = hardware_button(a) else {
+                        return Ok(());
+                    };
+                    release(&mut hid, &mut indigo, surface, &mut touch, &mut keys).await;
+                    indigo.send_button(page, usage, ButtonState::Down).await?;
+                    tokio::time::sleep(Duration::from_millis(80)).await;
+                    indigo.send_button(page, usage, ButtonState::Up).await?;
+                }
                 // Not an edge gesture (it starts mid-screen), so this is a synthesized
                 // drag on the raw touchscreen surface rather than an IndigoDigitizerEvent.
                 // Best-effort starting geometry; unverified against a live device.
@@ -994,6 +1094,16 @@ async fn input_loop(
     )
     .await;
 }
+/// Command 13's button IDs → (HID usage page, usage). Consumer-page codes as
+/// used for the physical side and volume buttons.
+fn hardware_button(id: u32) -> Option<(u64, u64)> {
+    match id {
+        1 => Some((0x0c, 0x30)), // Power: lock/sleep
+        2 => Some((0x0c, 0xe9)), // Volume up
+        3 => Some((0x0c, 0xea)), // Volume down
+        _ => None,
+    }
+}
 async fn release(
     hid: &mut UniversalHidServiceClient<Box<dyn ReadWrite>>,
     indigo: &mut IndigoHidClient<Box<dyn ReadWrite>>,
@@ -1015,6 +1125,20 @@ async fn release(
         }
     };
     let _ = tokio::time::timeout(Duration::from_millis(700), cleanup).await;
+}
+
+#[cfg(test)]
+mod button_tests {
+    use super::hardware_button;
+    #[test]
+    fn only_known_button_ids_map_to_hid_usages() {
+        assert_eq!(hardware_button(1), Some((0x0c, 0x30)));
+        assert_eq!(hardware_button(2), Some((0x0c, 0xe9)));
+        assert_eq!(hardware_button(3), Some((0x0c, 0xea)));
+        for id in [0, 4, 0x30, 0xe9, u32::MAX] {
+            assert_eq!(hardware_button(id), None);
+        }
+    }
 }
 
 #[cfg(test)]

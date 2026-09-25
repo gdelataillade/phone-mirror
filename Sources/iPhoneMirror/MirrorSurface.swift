@@ -101,6 +101,13 @@ final class MirrorView: MTKView, MTKViewDelegate {
   }
   func synchronize(model: MirrorModel) {
     self.model = model
+    if model.automationBusy {
+      // The agent released native input before taking the gesture. Clear local
+      // repeat/drag state without releasing the agent's new contact.
+      releaseAll()
+      inputEpoch = model.inputEpoch
+      return
+    }
     if fitWindowEpoch != model.fitWindowEpoch {
       fitWindowEpoch = model.fitWindowEpoch
       scheduleWindowFit()
@@ -184,7 +191,7 @@ final class MirrorView: MTKView, MTKViewDelegate {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
   }
   private var activeGeometry: InputGeometry? {
-    guard let model, model.sessionID == generation, model.canControl,
+    guard let model, !model.automationBusy, model.sessionID == generation, model.canControl,
       let frame = inputSession?.mailbox.latest(),
       let geometry = InputGeometry(
         view: bounds.size, screen: frame.size, rawOrientation: frame.orientation),
@@ -221,6 +228,13 @@ final class MirrorView: MTKView, MTKViewDelegate {
     _ = inputSession?.send(1, x, y)
   }
   private func endTouch() {
+    // A mouse-up or scheduled scroll-end can arrive before SwiftUI synchronizes
+    // the new agent ownership. Discard that stale local gesture without lifting
+    // the agent's contact; releaseAll suppresses native release while it is busy.
+    if model?.automationBusy == true {
+      releaseAll()
+      return
+    }
     flushMotion()
     if touchDown { _ = inputSession?.send(2) }
     touchDown = false
@@ -402,6 +416,7 @@ final class MirrorView: MTKView, MTKViewDelegate {
         repeating: event.isARepeat))
   }
   override func keyUp(with event: NSEvent) {
+    guard model?.automationBusy != true else { return }
     if let usage = KeyboardMap.usages[event.keyCode] { send(keyboard.keyUp(usage)) }
   }
   override func flagsChanged(with event: NSEvent) {
@@ -440,6 +455,6 @@ final class MirrorView: MTKView, MTKViewDelegate {
     mouseHeld = false
     touchDown = false
     _ = keyboard.releaseAll()
-    _ = inputSession?.send(6)
+    if model?.automationBusy != true { _ = inputSession?.send(6) }
   }
 }

@@ -779,3 +779,132 @@ so small/simple images (icons, screenshots) still paste losslessly.
 Confirmed fixed: the user re-tested with the exact file that had been
 failing throughout (`icon.png`, the 1,379,688-byte PNG) and it now pastes
 successfully.
+
+## Local API and MCP bridge, 23 September
+
+Added opt-in **Automation → Enable Agent Access**, an authenticated IPv4
+loopback HTTP API, and a Python standard-library stdio MCP bridge with 12 tools.
+The API observes the existing decoder mailbox and sends input through the same
+native session as the window. It does not open another USB stream. Screenshots
+are oriented/cropped consistently with the mirror and scaled to a 1280-pixel
+long edge. Session and observation IDs protect against reconnect/geometry
+changes; they do not assert that a requested UI transition succeeded.
+
+Controls include taps/holds, bounded swipes, explicit text paste, named keys,
+Home, App Switcher, Spotlight, Control Center, rotation and input release.
+Concurrent gestures are rejected; cancellation, session/geometry changes and
+input epoch changes stop further gesture steps. The native queue's existing
+overflow handling cancels its session so input cleanup can run.
+
+Validation performed on this checkout:
+
+- Release build and ad-hoc deep/strict signature verification passed.
+- `scripts/test.sh`: **99 tests passed** (41 Rust, 58 Swift), including 14 new
+  automation tests for request framing/authentication, UTF-8/size boundaries,
+  argument validation, landscape coordinate mapping, task cancellation and
+  queue-failure cleanup.
+- `python3 -B -m unittest discover -s scripts/tests -p 'test_mcp.py' -v`:
+  **13 passed**, including a real stdio subprocess and a localhost HTTP fixture.
+- Real running app: status 200, missing token 401, Origin/wrong Host 403,
+  invalid coordinates 400, screenshot and action without a phone 409. The
+  connection file had mode 0600. Stop Access removed the file; re-enabling
+  rotated credentials and rejected the previous token with 401. A graceful
+  quit/relaunch left access disabled and the discovery file absent.
+- Real bridge process → running app: initialization, 12-tool discovery,
+  status, and no-device screenshot tool error all verified. No token was
+  exposed in tool results or logs.
+- Swift formatting and `git diff --check` passed. Existing macOS 27 audio
+  and movie-API deprecation warnings remain.
+- Gitleaks scan of changed/new source and documentation found no leaks.
+
+Physical iPhone 17 / iOS 27.0 over USB, later the same day:
+
+- Status reported control readiness; a real screenshot was 589 × 1280, scaled
+  from the 1206 × 2624 stream.
+- MCP tap opened Settings, focused search and typed `Accessibility` (after
+  iOS's one-time paste permission prompt). Backspace removed one character;
+  a swipe scrolled the list. An immediate swipe right after closing search had
+  no effect until the UI settled — clients must observe, not blindly retry.
+- Direct HTTP: during a two-second swipe an overlapping tap returned 409, a
+  screenshot still succeeded, and `release` cancelled the swipe (409) with
+  busy returning to false. An early cancel can still land as a partial tap.
+- After reconnecting, a new session UUID was reported and a tap carrying the
+  old session ID returned 409.
+- A late fix stops a stale window mouse-up/scroll-end from lifting the
+  agent's touch; the 14 automation tests passed after it. The race itself was
+  not reproduced live.
+
+Not yet verified live (landscape mapping and rotation were verified on 25
+September, below, as were cable removal, lock and sleep): every key and
+system action, Unicode text, and use from a freshly registered Codex MCP
+session. The checklist is in [AUTOMATION.md](docs/AUTOMATION.md); Codex
+registration instructions are in [MCP-BRIDGE.md](docs/MCP-BRIDGE.md).
+
+## Apps, hardware buttons, raw screenshots and fixed port, 25 September
+
+Added `GET /v1/apps`, `POST /v1/apps/launch` and `POST /v1/apps/terminate`,
+a `button` action (lock, volume_up, volume_down, home), `format=png` and
+`scale=full` screenshots, and **Automation → Port** (Automatic, 8090 or custom).
+
+Automated: 45 Rust, 65 Swift and 15 Python bridge tests pass; release build
+succeeds.
+
+Running app, no phone, `curl` on port 8090: `localhost` Host accepted,
+missing token 401, unknown query parameters and invalid values 400, unknown
+endpoints (including `/v1/apps/uninstall`) 404, device-only calls 409. With
+8090 already taken, enabling access showed "Port 8090 is already in use.",
+stayed off and wrote no discovery file; enabling after the port was free worked.
+
+Physical iPhone 17 / iOS 27.0 over USB:
+
+- Screenshots: `format=png&scale=full` returned a 1206 × 2624 PNG body with
+  matching `X-iPhoneMirror-*` headers; the default is 589 × 1280.
+- **CoreDevice's one-shot `listapps` never replied on iOS 27** (20 s timeout,
+  mirroring unaffected). The streaming app list answers in about 0.1 s and is
+  now used for listing and terminate. `includeDefaultApps` is what adds App
+  Store apps: 274 apps in total, 9 developer builds with `scope=developer`.
+- Launching Settings by bundle ID opened it (screenshot verified) and marked it
+  running. Launching it again without `restart` returned the same pid.
+  Terminate killed it (Home Screen shown, running false); a second terminate
+  returned 409. `restart: true` returned a new pid each time. Unknown bundle
+  IDs return 404 for both launch and terminate.
+- Volume up and down each showed the Ringer indicator in the Dynamic Island.
+- Lock turned the screen off; the stream dropped to 0 FPS while status still
+  reported `canControl: true`. After the phone was unlocked by hand, the app
+  had reconnected on its own with a new session (60 FPS). A tap carrying the
+  old sessionID returned 409; a tap and Home with the new one worked.
+- Real stdio bridge: 16 tools listed; `iphone_list_apps` (developer and all),
+  a 404 terminate and an invalid button were returned as expected.
+
+Rotation, same day, in Calculator (launched by bundle ID):
+
+- Rotate right: screenshot became 1280 × 589 and the observationID orientation
+  changed 0 → 3. A tap carrying the portrait observationID returned 409.
+  Off-center taps landed on the intended keys (7 at upper left, the comma key
+  at lower middle, C at right of center).
+- Rotate left twice: portrait (0), then the other landscape (2). The
+  orientation-3 observationID returned 409; taps on 9 (upper middle) and 1
+  (lower left) entered "91".
+- A 2-second agent swipe interrupted by **iPhone → Rotate Right** returned 409
+  after 1.2 s with busy cleared; the next taps worked normally, so no touch
+  was left held. Back in portrait, taps entered digits and C cleared the
+  display.
+
+Cable removal and phone sleep, same day, with a harness running back-to-back
+2-second agent gestures in Calculator and polling status every 0.5 s:
+
+- **Cable removal:** the gesture in flight when the cable was pulled returned
+  409 (cancelled). For about 4 s afterwards status still reported
+  `canControl: true` and one more gesture was accepted, although the phone was
+  gone; then status showed disconnected and "Retrying". About 20 s after
+  replugging, the app reconnected on its own with a new session; gestures
+  resumed. A tap carrying the old sessionID returned 409; a tap with the new
+  one registered, so no touch was left held.
+- **Phone sleep (side button):** gestures kept returning 200 and status kept
+  `canControl: true` while the screen was off; sleep does not cancel a
+  gesture. Waking and resuming after sleep was not rechecked (lock → unlock,
+  above, reconnected with a working new session).
+
+Known limitation: `canControl` and `accepted: true` do not prove the phone is
+receiving input (screen off, locked, or just unplugged). Agents must verify
+each step with a fresh screenshot, as documented.

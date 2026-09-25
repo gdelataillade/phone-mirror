@@ -253,6 +253,39 @@ final class NativeSession: @unchecked Sendable {
         handle, $0.bindMemory(to: UInt8.self).baseAddress, $0.count, format.rawValue) == 1
     }
   }
+  /// Starts an app request under the handle lock, then waits without it, so a slow
+  /// device answer never blocks cancel or teardown. Returns (status, JSON object).
+  func app(_ request: String) async -> (Int, [String: Any]) {
+    lock.lock()
+    let call: OpaquePointer? =
+      if !cancelled, let handle { request.withCString { pm_app_start(handle, $0) } } else { nil }
+    lock.unlock()
+    guard let call else { return (503, ["error": "The iPhone session closed."]) }
+    return await withCheckedContinuation { continuation in
+      DispatchQueue.global(qos: .userInitiated).async {
+        // Slightly longer than the native 20 s bound, so the device's own timeout wins.
+        guard let text = pm_app_wait(call, 25_000) else {
+          continuation.resume(returning: (500, ["error": "App request failed"]))
+          return
+        }
+        defer { pm_string_free(text) }
+        guard
+          let json = try? JSONSerialization.jsonObject(with: Data(String(cString: text).utf8))
+            as? [String: Any],
+          let status = json["status"] as? Int
+        else {
+          continuation.resume(returning: (500, ["error": "Invalid app response"]))
+          return
+        }
+        if status == 200, let result = json["result"] as? [String: Any] {
+          continuation.resume(returning: (200, result))
+        } else {
+          continuation.resume(
+            returning: (status, ["error": json["error"] as? String ?? "App request failed"]))
+        }
+      }
+    }
+  }
   static func discover(completion: @escaping (DeviceList) -> Void) {
     DispatchQueue.global(qos: .userInitiated).async {
       guard let text = pm_devices() else {

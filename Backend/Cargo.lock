@@ -485,6 +485,7 @@ dependencies = [
 name = "phone-mirror-backend"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "idevice",
  "plist",
  "plist-macro",
