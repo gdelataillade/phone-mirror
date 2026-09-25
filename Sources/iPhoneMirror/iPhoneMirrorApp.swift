@@ -245,19 +245,37 @@ struct MirrorWindow: View {
         }.buttonStyle(.borderedProminent).controlSize(.large).padding(.top, 24)
       }
       Spacer()
-      Button("Connection diagnostics…") { model.showingDiagnostics = true }
-        .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.secondary)
-        .padding(.bottom, 14)
-      VStack(spacing: 5) {
-        Text("USB FIRST · PERSONAL PREVIEW").font(
-          .system(size: 9, weight: .semibold, design: .monospaced)
-        ).tracking(1.5)
-        Text("Requires Developer Mode and a device prepared in Xcode.").font(.system(size: 10))
-      }.foregroundStyle(.tertiary).multilineTextAlignment(.center).padding(.bottom, 24)
-        .padding(.horizontal, 20)
+      shortcutTips.padding(.bottom, 24)
     }.frame(maxWidth: .infinity, maxHeight: .infinity)
       // Shown on the phone's dark screen, whatever the Mac's appearance.
       .background(Color.black).environment(\.colorScheme, .dark)
+  }
+}
+
+private let tips: [(keys: String, action: String)] = [
+  ("⌘1", "Home"), ("⌘2", "App Switcher"), ("⌥⌘→", "Rotate"), ("⌘S", "Save screenshot"),
+  ("⌘V", "Paste text"),
+]
+
+extension MirrorWindow {
+  /// Shown while not mirroring, in place of setup fine print (Connection Diagnostics is in
+  /// the iPhone menu).
+  fileprivate var shortcutTips: some View {
+    VStack(spacing: 8) {
+      Text("PRO TIPS").font(.system(size: 9, weight: .semibold, design: .monospaced))
+        .tracking(1.5)
+      Grid(horizontalSpacing: 10, verticalSpacing: 4) {
+        ForEach(tips, id: \.keys) { tip in
+          GridRow {
+            Text(tip.keys).font(.system(size: 10, design: .monospaced))
+              .gridColumnAlignment(.trailing)
+            Text(tip.action).font(.system(size: 10)).gridColumnAlignment(.leading)
+          }
+        }
+      }
+    }
+    .foregroundStyle(.tertiary)
+    .accessibilityElement(children: .combine)
   }
 }
 
@@ -322,7 +340,8 @@ struct MirrorTitleBar: View {
         model.automationBusy ? "Agent controlling iPhone" : "Agent access enabled", .accentColor
       )
     }
-    return model.selected.map { ("iOS \($0.version)", .secondary) }
+    guard let device = model.selected else { return ("Waiting for iPhone…", .secondary) }
+    return ("iOS \(device.version)", .secondary)
   }
 }
 
