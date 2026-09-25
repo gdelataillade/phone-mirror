@@ -20,6 +20,18 @@ iPhone app or WebDriverAgent installation.
 4. Start a fresh Codex task, or restart its MCP connection if your client offers
    that control. Ask it to use `iphone_status` and `iphone_screenshot` first.
 
+## Connect Claude Code
+
+Same steps, registering with Claude Code instead (`--scope user` makes the
+tools available in every project; omit it for this project only):
+
+```sh
+claude mcp add --scope user iphonemirror -- python3 "$PWD/scripts/iphonemirror_mcp.py"
+claude mcp list
+```
+
+Then start a new session: MCP servers load when a session starts.
+
 The bridge requires Python 3.9 or later and only the standard library. Use an
 absolute Python executable path in the command if `python3` is not available to
 your Codex process. It can initialize and list tools while the app is closed;

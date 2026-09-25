@@ -835,7 +835,7 @@ Physical iPhone 17 / iOS 27.0 over USB, later the same day:
   not reproduced live.
 
 Not yet verified live (landscape mapping and rotation were verified on 25
-September, below): gestures interrupted by cable removal/lock/sleep, every key and
+September, below, as were cable removal, lock and sleep): every key and
 system action, Unicode text, and use from a freshly registered Codex MCP
 session. The checklist is in [AUTOMATION.md](docs/AUTOMATION.md); Codex
 registration instructions are in [MCP-BRIDGE.md](docs/MCP-BRIDGE.md).
@@ -889,3 +889,22 @@ Rotation, same day, in Calculator (launched by bundle ID):
   after 1.2 s with busy cleared; the next taps worked normally, so no touch
   was left held. Back in portrait, taps entered digits and C cleared the
   display.
+
+Cable removal and phone sleep, same day, with a harness running back-to-back
+2-second agent gestures in Calculator and polling status every 0.5 s:
+
+- **Cable removal:** the gesture in flight when the cable was pulled returned
+  409 (cancelled). For about 4 s afterwards status still reported
+  `canControl: true` and one more gesture was accepted, although the phone was
+  gone; then status showed disconnected and "Retrying". About 20 s after
+  replugging, the app reconnected on its own with a new session; gestures
+  resumed. A tap carrying the old sessionID returned 409; a tap with the new
+  one registered, so no touch was left held.
+- **Phone sleep (side button):** gestures kept returning 200 and status kept
+  `canControl: true` while the screen was off; sleep does not cancel a
+  gesture. Waking and resuming after sleep was not rechecked (lock → unlock,
+  above, reconnected with a working new session).
+
+Known limitation: `canControl` and `accepted: true` do not prove the phone is
+receiving input (screen off, locked, or just unplugged). Agents must verify
+each step with a fresh screenshot, as documented.
