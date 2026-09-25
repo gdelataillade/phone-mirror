@@ -56,6 +56,50 @@ final class AutomationTests: XCTestCase {
     ])
     XCTAssertThrowsError(try AutomationAction(data: text))
   }
+  func testAppRequestsValidateStrictlyAndProduceCanonicalNativeJSON() throws {
+    XCTAssertEqual(try AppRequest(listQuery: [:]).kind, .list(system: false))
+    XCTAssertEqual(try AppRequest(listQuery: ["system": "true"]).kind, .list(system: true))
+    XCTAssertEqual(
+      try AppRequest(listQuery: [:]).nativeJSON, "{\"op\":\"list\",\"system\":false}")
+    let session = UUID().uuidString
+    let launch = try AppRequest(
+      path: "/v1/apps/launch",
+      body: Data(
+        "{\"bundleID\":\"com.apple.Preferences\",\"restart\":true,\"sessionID\":\"\(session)\"}"
+          .utf8))
+    XCTAssertEqual(launch.kind, .launch(bundleID: "com.apple.Preferences", restart: true))
+    XCTAssertEqual(launch.sessionID, session)
+    XCTAssertTrue(launch.changesScreen)
+    XCTAssertEqual(
+      launch.nativeJSON,
+      "{\"bundleID\":\"com.apple.Preferences\",\"op\":\"launch\",\"restart\":true}")
+    let stop = try AppRequest(
+      path: "/v1/apps/terminate", body: Data("{\"bundleID\":\"com.example.app-1\"}".utf8))
+    XCTAssertEqual(stop.kind, .terminate(bundleID: "com.example.app-1"))
+    XCTAssertFalse(try AppRequest(listQuery: [:]).changesScreen)
+
+    for query in [["system": "1"], ["system": "yes"], ["all": "true"]] {
+      XCTAssertThrowsError(try AppRequest(listQuery: query), "\(query)")
+    }
+    let invalid: [(String, String)] = [
+      ("/v1/apps/launch", "{}"),
+      ("/v1/apps/launch", "{\"bundleID\":\"\"}"),
+      ("/v1/apps/launch", "{\"bundleID\":\"com.x/../y\"}"),
+      ("/v1/apps/launch", "{\"bundleID\":\"com x\"}"),
+      ("/v1/apps/launch", "{\"bundleID\":\"com.é\"}"),
+      ("/v1/apps/launch", "{\"bundleID\":1}"),
+      ("/v1/apps/launch", "{\"bundleID\":\"a\",\"restart\":1}"),
+      ("/v1/apps/launch", "{\"bundleID\":\"a\",\"arguments\":[]}"),
+      ("/v1/apps/launch", "{\"bundleID\":\"a\",\"sessionID\":\"x\"}"),
+      ("/v1/apps/terminate", "{\"bundleID\":\"a\",\"restart\":true}"),
+      ("/v1/apps/uninstall", "{\"bundleID\":\"a\"}"),
+      ("/v1/apps/launch", "[]"),
+      ("/v1/apps/launch", "{\"bundleID\":\"\(String(repeating: "a", count: 256))\"}"),
+    ]
+    for (path, body) in invalid {
+      XCTAssertThrowsError(try AppRequest(path: path, body: Data(body.utf8)), "\(path) \(body)")
+    }
+  }
   func testButtonActionsMapToFixedNativeIDs() throws {
     let expected: [String: UInt32?] = [
       "home": nil, "lock": 1, "volume_up": 2, "volume_down": 3,

@@ -53,6 +53,9 @@ body limit 128 KiB. Errors have `{ "error": "..." }` and a non-200 HTTP status.
 | `GET /v1/screenshot` | Upright PNG as base64 `image`, mimeType, width/height, sessionID, observationID, frameID and ageSeconds |
 | `GET /v1/screenshot?format=png` | The same PNG as the raw response body; metadata in `X-iPhoneMirror-Width`, `-Height`, `-SessionID`, `-ObservationID`, `-FrameID` and `-AgeSeconds` headers |
 | `POST /v1/actions` | Validated input action; returns accepted and a sessionID when connected |
+| `GET /v1/apps` | Installed apps: name, bundleID, version, build, system, developer and running. Add `?system=true` to include Apple's built-in apps |
+| `POST /v1/apps/launch` | `{"bundleID": "…", "restart": false}` launches the app in the foreground and returns its `pid`; `restart: true` kills a running instance first |
+| `POST /v1/apps/terminate` | `{"bundleID": "…"}` force-quits the app's running processes and returns their `pids`; 409 when it is not running |
 
 Screenshots contain stream pixels only, without window chrome or bezel. They
 are scaled to at most 1280 pixels on the long edge; add `scale=full` to keep the
@@ -68,6 +71,23 @@ curl -s -H "Authorization: Bearer $TOKEN" -o screen.png \
 frame, not a fresh camera capture or guaranteed post-action frame. An idle
 iPhone can reuse its last frame; use frameID/ageSeconds and visual verification.
 No screenshots or action text are saved to disk by the API.
+
+## Apps
+
+App requests use a separate device connection from touch and keyboard input, so
+a slow answer never delays input. They take up to about 20 seconds; clients
+should allow 30. One app request runs at a time (429 otherwise). Launch and
+terminate accept an optional `sessionID` and return 409 while an agent gesture
+is running; listing is allowed during a gesture. Bundle IDs are 1–255 letters,
+digits, dots or hyphens. A launch or terminate refused by the iPhone (for
+example an unknown bundle ID, or an Apple app iOS will not stop) returns 409 or
+404 with the reason. There is no install or uninstall.
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"bundleID":"com.apple.Preferences","restart":true}' \
+  http://127.0.0.1:8090/v1/apps/launch
+```
 
 ## Actions
 
@@ -109,9 +129,9 @@ observe again before choosing what to do next.
 ## Current boundaries
 
 - Coordinate/HID control, not an iOS accessibility tree or XCTest assertions.
-- No direct bundle-ID launch, install, arbitrary shell, unlock or credential API.
-  Launch an app visibly via Home/Spotlight, or launch your development build
-  using your existing Xcode/Flutter tooling.
+- No install, uninstall, arbitrary shell, unlock or credential API. Install your
+  development build with your existing Xcode/Flutter tooling, then launch it by
+  bundle ID.
 - No automatic clipboard sync, remote network listener, workflow runner or LLM
   backend. Codex/the client supplies the agent loop and its own permissions.
 - Avoid opening the iPhone Camera app while mirroring: the mirroring service
@@ -128,5 +148,9 @@ observe again before choosing what to do next.
    test an off-center tap. Send an old observationID and expect 409.
 5. Start a long swipe and press Stop Agent Action; ensure no held contact remains.
    Repeat with disconnect/reconnect; an old sessionID must be rejected.
-6. Disable access; the listener and discovery file must disappear. Relaunching
+6. List apps; launch Settings (`com.apple.Preferences`), terminate it, then
+   launch it with `restart: true`. Verify each step with a screenshot.
+7. Press volume up and down (the volume indicator appears), then lock and
+   unlock by hand; control must resume.
+8. Disable access; the listener and discovery file must disappear. Relaunching
    the app must leave access disabled.

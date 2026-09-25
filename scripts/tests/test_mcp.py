@@ -38,10 +38,12 @@ def initialize(server, version="2025-11-25"):
 class FakeAPI:
     def __init__(self):
         self.calls = []
+        self.timeouts = []
         self.error = None
 
-    def request(self, method, endpoint, payload=None):
+    def request(self, method, endpoint, payload=None, timeout=None):
         self.calls.append((method, endpoint, payload))
+        self.timeouts.append(timeout)
         if self.error:
             raise bridge.BridgeError(self.error)
         if endpoint == "/v1/screenshot":
@@ -72,7 +74,7 @@ class ProtocolTests(unittest.TestCase):
     def test_catalog_and_all_action_mappings(self):
         initialize(self.server)
         catalog = self.server.handle(request("tools/list"))["result"]["tools"]
-        self.assertEqual(len(catalog), 13)
+        self.assertEqual(len(catalog), 16)
         for definition in catalog:
             self.assertFalse(definition["inputSchema"]["additionalProperties"])
         arguments = {
@@ -85,11 +87,29 @@ class ProtocolTests(unittest.TestCase):
             name = definition["name"]
             if definition["annotations"]["readOnlyHint"]:
                 continue
+            if name in bridge.APP_ENDPOINTS:
+                values = {"bundleID": "com.apple.Preferences", "sessionID": "current"}
+                self.assertFalse(self.call(name, values)["result"]["isError"])
+                self.assertEqual(self.api.calls[-1], ("POST", bridge.APP_ENDPOINTS[name], values))
+                self.assertEqual(self.api.timeouts[-1], bridge.APP_REQUEST_TIMEOUT)
+                continue
             op = name[7:]
             values = {**arguments.get(op, {}), "sessionID": "current", "observationID": "upright-100x200"}
             response = self.call(name, values)
             self.assertFalse(response["result"]["isError"])
             self.assertEqual(self.api.calls[-1], ("POST", "/v1/actions", {"op": op, **values}))
+
+    def test_app_tools_map_to_app_endpoints(self):
+        initialize(self.server)
+        self.assertFalse(self.call("iphone_list_apps")["result"]["isError"])
+        self.assertFalse(self.call("iphone_list_apps", {"system": True})["result"]["isError"])
+        self.assertFalse(self.call("iphone_launch_app", {"bundleID": "com.example.app-1", "restart": True})["result"]["isError"])
+        self.assertEqual(self.api.calls, [
+            ("GET", "/v1/apps?system=false", None),
+            ("GET", "/v1/apps?system=true", None),
+            ("POST", "/v1/apps/launch", {"bundleID": "com.example.app-1", "restart": True}),
+        ])
+        self.assertEqual(self.api.timeouts, [bridge.APP_REQUEST_TIMEOUT] * 3)
 
     def test_invalid_actions_never_reach_api(self):
         initialize(self.server)
@@ -111,6 +131,16 @@ class ProtocolTests(unittest.TestCase):
             ("iphone_type", {"text": "x" * 16001}),
             ("iphone_home", {"sessionID": ""}),
             ("iphone_home", {"observationID": ""}),
+            ("iphone_list_apps", {"system": "true"}),
+            ("iphone_list_apps", {"system": 1}),
+            ("iphone_launch_app", {}),
+            ("iphone_launch_app", {"bundleID": ""}),
+            ("iphone_launch_app", {"bundleID": "com.x/../y"}),
+            ("iphone_launch_app", {"bundleID": "com.x\n"}),
+            ("iphone_launch_app", {"bundleID": "a" * 256}),
+            ("iphone_launch_app", {"bundleID": "a", "restart": "yes"}),
+            ("iphone_launch_app", {"bundleID": "a", "observationID": "x"}),
+            ("iphone_terminate_app", {"bundleID": "a", "restart": True}),
         ]
         for name, args in cases:
             with self.subTest(name=name, arguments=str(args)[:100]):

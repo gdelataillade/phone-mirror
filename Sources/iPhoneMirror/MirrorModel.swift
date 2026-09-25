@@ -33,6 +33,7 @@ import SwiftUI
     didSet { UserDefaults.standard.set(automationPort, forKey: "automationPort") }
   }
   var automationCapturing = false
+  var automationAppRequest = false
   var automationServer: AutomationServer?
   // Defaults to muted: audio only starts once someone explicitly opts in.
   @Published var audioMuted: Bool =

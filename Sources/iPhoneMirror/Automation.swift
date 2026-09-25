@@ -75,8 +75,41 @@ extension MirrorModel {
       }.sorted { $0.0 < $1.0 }
       return .binary(shot.png, contentType: "image/png", headers: headers)
     }
+    if request.method == "GET", request.path == "/v1/apps" {
+      return .json(try await appRequest(AppRequest(listQuery: request.query)))
+    }
     try request.requireQuery(allowing: [])
+    if request.method == "POST", request.path.hasPrefix("/v1/apps/") {
+      return .json(try await appRequest(AppRequest(path: request.path, body: request.body)))
+    }
     return .json(try await automationJSON(request))
+  }
+
+  private func appRequest(_ app: AppRequest) async throws -> [String: Any] {
+    if let expected = app.sessionID, expected != sessionID?.uuidString {
+      throw AutomationFailure(409, "Session changed; observe again before acting")
+    }
+    guard !app.changesScreen || !automationBusy else {
+      throw AutomationFailure(409, "Another agent action is running")
+    }
+    guard !automationAppRequest else {
+      throw AutomationFailure(429, "Another app request is running")
+    }
+    guard canControl, let native = session, let id = sessionID else {
+      throw AutomationFailure(409, "Connect and unlock an iPhone; wait for stable video")
+    }
+    automationAppRequest = true
+    defer { automationAppRequest = false }
+    let (status, result) = await native.app(app.nativeJSON)
+    guard status == 200 else {
+      throw AutomationFailure(status, result["error"] as? String ?? "App request failed")
+    }
+    var response = result
+    response["sessionID"] = id.uuidString
+    if app.changesScreen {
+      response["note"] = "Take another screenshot to verify the result on the phone."
+    }
+    return response
   }
 
   private func automationJSON(_ request: AutomationRequest) async throws -> [String: Any] {
@@ -92,6 +125,7 @@ extension MirrorModel {
         "capabilities": [
           "screenshot", "tap", "swipe", "type", "key", "home", "button",
           "app_switcher", "spotlight", "control_center", "rotate", "release",
+          "apps", "launch_app", "terminate_app",
         ],
       ]
     }

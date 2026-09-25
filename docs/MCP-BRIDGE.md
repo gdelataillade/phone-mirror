@@ -62,6 +62,9 @@ shape, substituting their actual absolute paths:
 | `iphone_control_center` | Open Control Center. |
 | `iphone_rotate` | `direction`: `left` or `right`. |
 | `iphone_release` | Release held input. |
+| `iphone_list_apps` | Installed apps with `bundleID`, version and `running`; `system: true` includes Apple's apps. |
+| `iphone_launch_app` | `bundleID`; optional `restart` to kill a running instance first. Returns the `pid`. |
+| `iphone_terminate_app` | `bundleID`; force-quits the app. |
 
 All action tools accept optional `sessionID` and `observationID` from the latest
 observation. Use both: they reject a changed connection or screen geometry before
@@ -103,9 +106,12 @@ this token into client configuration or logs. Requests use
 | `GET /v1/status` | Return JSON connection and observation metadata. |
 | `GET /v1/screenshot` | Return JSON with base64 `image`, PNG `mimeType`, dimensions and observation metadata. |
 | `POST /v1/actions` | Send JSON such as `{"op":"tap","x":0.5,"y":0.5,"sessionID":"…","observationID":"…"}`. |
+| `GET /v1/apps?system=…` | Used by `iphone_list_apps`. |
+| `POST /v1/apps/launch`, `/v1/apps/terminate` | Used by `iphone_launch_app` and `iphone_terminate_app`, with `bundleID` and optional `sessionID`. |
 
 Actions use the names in the tool table without the `iphone_` prefix, except
-`iphone_status` and `iphone_screenshot`, which are GET requests. HTTP failures
+`iphone_status`, `iphone_screenshot` and the three app tools. App tools wait up
+to 35 seconds for the device; other calls time out after 15. HTTP failures
 return `{"error":"…"}`. A stale session or observation returns HTTP 409.
 
 The bridge accepts only numeric loopback HTTP origins with an explicit port;
@@ -148,9 +154,8 @@ and malformed requests return protocol errors; action, connection and argument
 failures return MCP tool errors. It advertises no task, resource, prompt,
 subscription, or sampling capability.
 
-This first version controls the already-connected iPhone. It does not connect a
-device, launch an app by bundle ID, expose a native accessibility tree, or provide
-OCR. A vision-capable agent can inspect the screenshot and navigate with touch,
+This version controls the already-connected iPhone. It does not connect a
+device, install apps, expose a native accessibility tree, or provide OCR. A vision-capable agent can inspect the screenshot and navigate with touch,
 keyboard and Spotlight. MCP registration and automated transport tests do not
 by themselves verify physical-device behavior.
 

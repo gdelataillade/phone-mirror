@@ -298,6 +298,95 @@ public struct AutomationAction {
   }
 }
 
+/// `GET /v1/apps`, `POST /v1/apps/launch` and `POST /v1/apps/terminate`, validated
+/// as strictly as actions, then handed to the native layer as canonical JSON.
+public struct AppRequest: Equatable {
+  public enum Kind: Equatable {
+    case list(system: Bool)
+    case launch(bundleID: String, restart: Bool)
+    case terminate(bundleID: String)
+  }
+  public let kind: Kind
+  public let sessionID: String?
+
+  public static func validBundleID(_ value: String) -> Bool {
+    (1...255).contains(value.utf8.count)
+      && value.unicodeScalars.allSatisfy {
+        $0.isASCII
+          && (CharacterSet.alphanumerics.contains($0) || $0 == "." || $0 == "-")
+      }
+  }
+
+  public init(listQuery query: [String: String]) throws {
+    guard Set(query.keys).isSubset(of: ["system"]) else {
+      throw AutomationFailure(400, "Unsupported query parameter")
+    }
+    switch query["system"] ?? "false" {
+    case "false": kind = .list(system: false)
+    case "true": kind = .list(system: true)
+    default: throw AutomationFailure(400, "system must be true or false")
+    }
+    sessionID = nil
+  }
+
+  public init(path: String, body: Data) throws {
+    guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+      throw AutomationFailure("Expected a JSON object")
+    }
+    let launching: Bool
+    switch path {
+    case "/v1/apps/launch": launching = true
+    case "/v1/apps/terminate": launching = false
+    default: throw AutomationFailure(404, "Unknown endpoint")
+    }
+    let fields: Set<String> =
+      launching ? ["bundleID", "restart", "sessionID"] : ["bundleID", "sessionID"]
+    guard Set(json.keys).isSubset(of: fields) else {
+      throw AutomationFailure("Unexpected app request field")
+    }
+    guard let bundleID = json["bundleID"] as? String, Self.validBundleID(bundleID) else {
+      throw AutomationFailure("bundleID must be 1–255 letters, digits, dots or hyphens")
+    }
+    if let supplied = json["sessionID"] {
+      guard let value = supplied as? String, UUID(uuidString: value) != nil else {
+        throw AutomationFailure("sessionID must be a UUID")
+      }
+      sessionID = value
+    } else {
+      sessionID = nil
+    }
+    if launching {
+      var restart = false
+      if let supplied = json["restart"] {
+        guard let value = supplied as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else {
+          throw AutomationFailure("restart must be a boolean")
+        }
+        restart = value.boolValue
+      }
+      kind = .launch(bundleID: bundleID, restart: restart)
+    } else {
+      kind = .terminate(bundleID: bundleID)
+    }
+  }
+
+  /// Launch and terminate change what is on screen; listing does not.
+  public var changesScreen: Bool {
+    if case .list = kind { return false }
+    return true
+  }
+
+  public var nativeJSON: String {
+    let object: [String: Any]
+    switch kind {
+    case .list(let system): object = ["op": "list", "system": system]
+    case .launch(let id, let restart): object = ["op": "launch", "bundleID": id, "restart": restart]
+    case .terminate(let id): object = ["op": "terminate", "bundleID": id]
+    }
+    let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
+    return String(decoding: data, as: UTF8.self)
+  }
+}
+
 /// Sends a bounded gesture to one captured session. validate must reject changed
 /// sessions, orientation, explicit cancellation and loss of control before every step.
 @MainActor public enum AutomationGesture {

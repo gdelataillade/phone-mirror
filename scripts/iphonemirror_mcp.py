@@ -8,6 +8,7 @@ import http.client
 import json
 import math
 from pathlib import Path
+import re
 import sys
 from urllib.parse import urlsplit
 
@@ -22,17 +23,24 @@ SESSION = {
     "type": "string", "minLength": 1, "maxLength": 128,
     "description": "Session ID from the latest observation; rejects a different connection.",
 }
+BUNDLE_ID = {
+    "type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[A-Za-z0-9.-]+$",
+    "description": "App bundle identifier, for example com.apple.Preferences.",
+}
+# App calls wait on the device (the app bounds them at 20-25 s); other calls are short.
+REQUEST_TIMEOUT = 15
+APP_REQUEST_TIMEOUT = 35
 OBSERVATION = {
     "type": "string", "minLength": 1, "maxLength": 200,
     "description": "Observation ID from the latest screenshot; rejects changed session, orientation or geometry.",
 }
 
 
-def tool(name, description, properties=None, required=(), read_only=False):
+def tool(name, description, properties=None, required=(), read_only=False,
+         guards=("sessionID", "observationID")):
     fields = dict(properties or {})
     if not read_only:
-        fields["sessionID"] = SESSION
-        fields["observationID"] = OBSERVATION
+        fields.update({key: {"sessionID": SESSION, "observationID": OBSERVATION}[key] for key in guards})
     return {
         "name": "iphone_" + name,
         "description": description,
@@ -70,7 +78,14 @@ TOOLS = [
     tool("rotate", "Request iPhone screen rotation left or right; observe to verify the app accepted rotation.",
          {"direction": {"type": "string", "enum": ["left", "right"]}}, ("direction",)),
     tool("release", "Release held touch and keyboard input for the current connection."),
+    tool("list_apps", "List installed apps with name, bundleID, version and whether each is running. Set system to include Apple's built-in apps.",
+         {"system": {"type": "boolean", "default": False}}, read_only=True),
+    tool("launch_app", "Launch an installed app by bundle ID, bringing it to the foreground. Set restart to kill a running instance first. Observe afterward to verify.",
+         {"bundleID": BUNDLE_ID, "restart": {"type": "boolean", "default": False}}, ("bundleID",), guards=("sessionID",)),
+    tool("terminate_app", "Force-quit a running app by bundle ID. Unsaved state in that app is lost.",
+         {"bundleID": BUNDLE_ID}, ("bundleID",), guards=("sessionID",)),
 ]
+APP_ENDPOINTS = {"iphone_launch_app": "/v1/apps/launch", "iphone_terminate_app": "/v1/apps/terminate"}
 TOOL_BY_NAME = {item["name"]: item for item in TOOLS}
 
 
@@ -123,9 +138,9 @@ class API:
     def __init__(self, path=DISCOVERY_PATH):
         self.path = Path(path)
 
-    def request(self, method, endpoint, payload=None):
+    def request(self, method, endpoint, payload=None, timeout=REQUEST_TIMEOUT):
         host, port, token = discovery(self.path)
-        connection = http.client.HTTPConnection(host, port, timeout=15)
+        connection = http.client.HTTPConnection(host, port, timeout=timeout)
         try:
             headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
             body = None
@@ -168,7 +183,10 @@ def validate_arguments(definition, arguments):
         rule = schema["properties"].get(name)
         if rule is None:
             raise BridgeError(f"Unknown argument: {name}.")
-        if rule["type"] == "number":
+        if rule["type"] == "boolean":
+            if not isinstance(value, bool):
+                raise BridgeError(f"{name} must be true or false.")
+        elif rule["type"] == "number":
             if (isinstance(value, bool) or not isinstance(value, (int, float))
                     or value < rule["minimum"] or value > rule["maximum"]
                     or not math.isfinite(value)):
@@ -178,6 +196,8 @@ def validate_arguments(definition, arguments):
                     or len(value) < rule.get("minLength", 0)
                     or len(value) > rule.get("maxLength", MAX_MESSAGE_BYTES)):
                 raise BridgeError(f"Invalid string argument: {name}.")
+            if "pattern" in rule and not re.fullmatch(rule["pattern"], value):
+                raise BridgeError(f"Invalid {name}.")
             if "enum" in rule and value not in rule["enum"]:
                 raise BridgeError(f"{name} must be one of: {', '.join(rule['enum'])}.")
             if "\0" in value:
@@ -248,6 +268,13 @@ class Server:
                 content = [text_content(self.api.request("GET", "/v1/status"))]
             elif name == "iphone_screenshot":
                 content = screenshot_content(self.api.request("GET", "/v1/screenshot"))
+            elif name == "iphone_list_apps":
+                system = "true" if arguments.get("system") else "false"
+                content = [text_content(self.api.request(
+                    "GET", "/v1/apps?system=" + system, timeout=APP_REQUEST_TIMEOUT))]
+            elif name in APP_ENDPOINTS:
+                content = [text_content(self.api.request(
+                    "POST", APP_ENDPOINTS[name], arguments, timeout=APP_REQUEST_TIMEOUT))]
             else:
                 result = self.api.request("POST", "/v1/actions", {"op": name[7:], **arguments})
                 content = [text_content(result)]

@@ -166,6 +166,12 @@ enum AutomationResponse {
         if let chunk { self.data.append(chunk) }
         do {
           if let request = try AutomationRequest.parse(self.data) {
+            // Receiving is bounded at 10 s; the handler gets its own, longer bound
+            // because app requests wait on the device.
+            self.deadline?.cancel()
+            let timeout = DispatchWorkItem { [weak self] in self?.stop() }
+            self.deadline = timeout
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: timeout)
             self.operation = Task { @MainActor [weak self] in
               guard let self else { return }
               do { self.respond(200, try await self.handler(request)) } catch let failure

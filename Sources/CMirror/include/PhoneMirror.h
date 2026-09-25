@@ -36,6 +36,15 @@ int32_t pm_paste(PMHandle *handle, const uint8_t *text, size_t length);
 // format: 0 PNG, 1 JPEG. Replaces the device clipboard.
 int32_t pm_paste_image(
     PMHandle *handle, const uint8_t *bytes, size_t length, uint32_t format);
+// App control on a separate device connection from input.
+// request is UTF-8 JSON: {"op":"list","system":bool} | {"op":"launch","bundleID":…,
+// "restart":bool} | {"op":"terminate","bundleID":…}. Nonblocking; null only for a
+// null handle. The call does not borrow the handle once returned.
+typedef struct PMAppCall PMAppCall;
+PMAppCall *pm_app_start(PMHandle *handle, const char *request);
+// Blocks up to timeout_ms (max 30000) and frees call. Returns JSON
+// {"status":200,"result":{...}} or {"status":N,"error":"..."}; free with pm_string_free.
+char *pm_app_wait(PMAppCall *call, uint32_t timeout_ms);
 void pm_cancel(PMHandle *handle);
 // No other call may use handle once close starts. Joins all work; may block.
 void pm_close(PMHandle *handle);
