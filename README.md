@@ -9,6 +9,10 @@ I built it for myself because other tools didn’t work for me.
 
 **Early preview; USB only.**
 
+<p align="center">
+  <img src="Resources/demo.gif" width="480" alt="iPhoneMirror demo: mirroring and controlling an iPhone from a Mac">
+</p>
+
 ## Features
 
 - Mouse, keyboard, scrolling and text paste.
