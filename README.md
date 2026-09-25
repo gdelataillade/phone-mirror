@@ -38,4 +38,15 @@ The app checks for updates automatically and can check on demand (app menu → C
 
 Keep your iPhone unlocked, click **Mirror iPhone**, then click the picture to control it.
 
+## AI agents (MCP)
+
+Let Claude Code, Codex or another MCP client see and operate your iPhone to test apps: screenshots, taps, typing, buttons, and launching apps by bundle ID.
+
+1. While mirroring, choose **Automation → Enable Agent Access**.
+2. Register the bridge once, from this repository:
+   `claude mcp add --scope user iphonemirror -- python3 "$PWD/scripts/iphonemirror_mcp.py"` (or `codex mcp add iphonemirror -- …`)
+3. Start a new agent session and ask, e.g. *"Use the iphone tools to open Settings and search for Wi-Fi."*
+
+Details: [MCP bridge](docs/MCP-BRIDGE.md) · [HTTP API](docs/AUTOMATION.md)
+
 [Help & limitations](VALIDATION.md) · [Development](docs/DEVELOPMENT.md) · [MIT license](LICENSE)
