@@ -870,6 +870,8 @@ Physical iPhone 17 / iOS 27.0 over USB:
   IDs return 404 for both launch and terminate.
 - Volume up and down each showed the Ringer indicator in the Dynamic Island.
 - Lock turned the screen off; the stream dropped to 0 FPS while status still
-  reported `canControl: true`.
+  reported `canControl: true`. After the phone was unlocked by hand, the app
+  had reconnected on its own with a new session (60 FPS). A tap carrying the
+  old sessionID returned 409; a tap and Home with the new one worked.
 - Real stdio bridge: 16 tools listed; `iphone_list_apps` (developer and all),
   a 404 terminate and an invalid button were returned as expected.
