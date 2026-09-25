@@ -23,10 +23,6 @@ I built it for myself because other tools didn’t work for me.
 - Optional iPhone bezels, Always on Top and automatic reconnection.
 - Opt-in local [API and MCP tools](docs/AUTOMATION.md) for AI-agent device testing.
 
-## Incoming features
-
-- Wi-Fi support (under investigation).
-
 ## Setup
 
 - Apple silicon Mac: **macOS 27**. iPhone: **iOS 27**.
