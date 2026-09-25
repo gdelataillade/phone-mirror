@@ -146,35 +146,3 @@ struct RecordingCommands: View {
       .disabled(recorder.busy || (!recorder.recording && !model.canControl))
   }
 }
-
-struct RecordingButton: View {
-  @ObservedObject var model: MirrorModel
-  @ObservedObject var recorder: RecordingController
-  var body: some View {
-    Button {
-      if recorder.recording { recorder.stop() } else { recorder.start(model: model) }
-    } label: {
-      HStack(spacing: 3) {
-        Image(systemName: recorder.recording ? "stop.circle.fill" : "record.circle")
-          .foregroundStyle(recorder.recording ? Color.red : Color.secondary)
-        if recorder.recording {
-          Text(String(format: "%d:%02d", recorder.elapsed / 60, recorder.elapsed % 60))
-            .font(.system(size: 10, design: .monospaced))
-        }
-      }
-    }.buttonStyle(.borderless)
-      .help(recorder.recording ? "Stop recording ⇧⌘S" : "Record iPhone screen ⇧⌘S")
-      .accessibilityLabel(recorder.recording ? "Stop recording" : "Record iPhone screen")
-      .disabled(recorder.busy || (!recorder.recording && !model.canControl))
-      .alert(
-        "Screen recording",
-        isPresented: Binding(
-          get: { recorder.notice != nil }, set: { if !$0 { recorder.notice = nil } }
-        )
-      ) {
-        Button("OK", role: .cancel) { recorder.notice = nil }
-      } message: {
-        Text(recorder.notice ?? "")
-      }
-  }
-}

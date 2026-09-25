@@ -12,10 +12,20 @@ import SwiftUI
     [AutomationPort.automatic, AutomationPort.preset].contains(model.automationPort)
       ? "Custom…" : "Custom (\(model.automationPort))…"
   }
+  private static let volumeLevels = [0.25, 0.5, 0.75, 1.0]
+  /// Checks the level nearest to the stored volume, which may predate these fixed levels.
+  private var volumeLevel: Binding<Double> {
+    Binding(
+      get: {
+        Self.volumeLevels.min { abs($0 - model.audioVolume) < abs($1 - model.audioVolume) } ?? 1
+      },
+      set: { model.audioVolume = $0 })
+  }
   var body: some Scene {
     Window("iPhoneMirror", id: "mirror") {
-      MirrorWindow(model: model, updater: updater)
+      MirrorWindow(model: model, recorder: model.recording)
         .frame(minWidth: 360, minHeight: model.isLandscape ? 360 : 580)
+        .containerBackground(.clear, for: .window)
         .onAppear {
           appDelegate.model = model
           model.refresh()
@@ -23,7 +33,9 @@ import SwiftUI
           NSApp.activate(ignoringOtherApps: true)
         }
     }
-    .defaultSize(width: 440, height: 820)
+    .windowStyle(.hiddenTitleBar)
+    // Fits a bezeled portrait iPhone below the title bar without side gaps.
+    .defaultSize(width: 376, height: 820)
     .commands {
       CommandGroup(after: .appInfo) {
         Button("Check for Updates…") { updater.checkForUpdates() }
@@ -51,6 +63,9 @@ import SwiftUI
         RecordingCommands(model: model, recorder: model.recording)
         Toggle("Mute iPhone Audio", isOn: $model.audioMuted)
           .keyboardShortcut("m", modifiers: [.command, .option])
+        Picker("Volume", selection: volumeLevel) {
+          ForEach(Self.volumeLevels, id: \.self) { Text("\(Int($0 * 100))%").tag($0) }
+        }.disabled(model.audioMuted)
         Divider()
         Button("Home") { model.home() }.keyboardShortcut("1", modifiers: [.command])
           .disabled(!model.canControl)
@@ -128,96 +143,21 @@ struct MirrorWindow: View {
   @AppStorage("alwaysOnTop") private var alwaysOnTop = false
   @AppStorage("showDeviceBezel") private var showDeviceBezel = true
   @ObservedObject var model: MirrorModel
-  @ObservedObject var updater: Updater
+  @ObservedObject var recorder: RecordingController
   var body: some View {
-    VStack(spacing: 0) {
-      if model.automationEnabled {
-        HStack {
-          Label(model.automationBusy ? "Agent controlling iPhone" : "Agent access enabled", systemImage: "terminal")
-          Spacer()
-          Button("Stop Access") { model.setAutomationEnabled(false) }
-        }
-        .font(.caption)
-        .padding(8)
-        .background(Color.accentColor.opacity(0.12))
-      }
-      // Plain, always-visible buttons: NSToolbar items and Menus proved unreliable
-      // (clicks silently not registering) once this window is at its 360pt minimum
-      // width, even after trimming what collapsed into the system overflow chevron.
-      HStack(spacing: 14) {
-        Button {
-          alwaysOnTop.toggle()
-        } label: {
-          Image(systemName: alwaysOnTop ? "pin.fill" : "pin")
-        }
-        .buttonStyle(.plain)
-        .help(alwaysOnTop ? "Turn off Always on Top ⌥⌘T" : "Always on Top ⌥⌘T")
-        .accessibilityLabel("Always on Top")
-        .accessibilityValue(alwaysOnTop ? "On" : "Off")
-        Button {
-          showDeviceBezel.toggle()
-        } label: {
-          Image(systemName: "iphone")
-        }
-        .buttonStyle(.plain)
-        .help(showDeviceBezel ? "Hide iPhone Bezel ⌥⌘B" : "Show iPhone Bezel ⌥⌘B")
-        .accessibilityLabel("iPhone Bezel")
-        .accessibilityValue(showDeviceBezel ? "On" : "Off")
-        Button {
-          updater.checkForUpdates()
-        } label: {
-          Image(systemName: "arrow.down.circle")
-        }
-        .buttonStyle(.plain)
-        .help("Check for Updates…")
-        .accessibilityLabel("Check for Updates")
-        .disabled(!updater.canCheckForUpdates)
-        if model.hasPicture {
-          Button {
-            model.audioMuted.toggle()
-          } label: {
-            Image(systemName: speakerIcon)
-          }
-          .buttonStyle(.plain)
-          .help(model.audioMuted ? "Unmute iPhone audio" : "Mute iPhone audio")
-          .accessibilityLabel("iPhone audio")
-          .accessibilityValue(model.audioMuted ? "Muted" : "Unmuted")
-          if !model.audioMuted {
-            Slider(value: $model.audioVolume, in: 0...1) { Text("Volume") }
-              .labelsHidden()
-              .frame(width: 100)
-          }
-        }
-        Spacer()
-        if model.active {
-          Button {
-            model.reconnectNow()
-          } label: {
-            Image(systemName: "arrow.clockwise")
-          }.buttonStyle(.plain).help("Reconnect now ⇧⌘R").disabled(!model.canReconnect)
-            .accessibilityLabel("Reconnect now")
-          Button {
-            model.disconnect()
-          } label: {
-            Image(systemName: "xmark.circle")
-          }.buttonStyle(.plain).help("Disconnect and stop automatic reconnection")
-            .accessibilityLabel("Disconnect")
-        } else {
-          Button {
-            model.refresh()
-          } label: {
-            Image(systemName: "arrow.clockwise")
-          }.buttonStyle(.plain).help("Refresh devices").disabled(model.discovering)
-            .accessibilityLabel("Refresh devices")
-        }
-      }.padding(.horizontal, 16).padding(.vertical, 10)
-      Divider()
+    VStack(spacing: TitleBarMetrics.gap) {
+      MirrorTitleBar(model: model, recorder: recorder)
+        .padding([.horizontal, .top], TitleBarMetrics.margin)
       ZStack {
-        if model.session != nil {
-          FramedMirror(model: model, showBezel: showDeviceBezel)
-            .id(model.sessionID).opacity(model.hasPicture ? 1 : 0)
+        PhoneFrame(screenSize: model.screenSize, showBezel: showDeviceBezel) { radius, inset in
+          ZStack {
+            if model.session != nil {
+              MirrorSurface(model: model, cornerRadius: radius, bezelInset: inset)
+                .id(model.sessionID).opacity(model.hasPicture ? 1 : 0)
+            }
+            if !model.hasPicture { connectionView }
+          }
         }
-        if !model.hasPicture { connectionView }
         if let notice = model.screenshotNotice {
           VStack {
             Text(notice).font(.callout).padding(10)
@@ -226,46 +166,12 @@ struct MirrorWindow: View {
           }.allowsHitTesting(false)
         }
       }
-      if model.hasPicture {
-        Divider()
-        HStack(spacing: 16) {
-          Circle().fill(Color.green).frame(width: 6, height: 6)
-          Text("\(model.fps) fps").font(.system(size: 10, design: .monospaced)).foregroundStyle(
-            .tertiary)
-          Spacer()
-          RecordingButton(model: model, recorder: model.recording)
-          Button {
-            model.saveScreenshot()
-          } label: {
-            Image(systemName: "camera")
-          }.buttonStyle(.plain).help("Save screenshot ⌘S · Copy screenshot ⇧⌘C")
-            .accessibilityLabel("Save screenshot").disabled(!model.canCaptureScreenshot)
-          Button {
-            model.rotate()
-          } label: {
-            Image(systemName: "rotate.right")
-          }.buttonStyle(.plain).help("Rotate iPhone right ⌥⌘→")
-            .accessibilityLabel("Rotate iPhone right").disabled(!model.canControl)
-          Button {
-            model.home()
-          } label: {
-            Image(systemName: "house")
-          }.buttonStyle(.plain).help("Home ⌘1").accessibilityLabel("Home").disabled(
-            !model.canControl)
-          Button {
-            model.appSwitcher()
-          } label: {
-            Image(systemName: "square.on.square")
-          }.buttonStyle(.plain).help("App Switcher ⌘2").accessibilityLabel("App Switcher")
-            .disabled(!model.canControl)
-        }.padding(.horizontal, 16).padding(.vertical, 10)
-      }
     }
-    .background(.regularMaterial)
+    // The bar replaces the titlebar, so it takes the titlebar's place at the very top.
+    .ignoresSafeArea(.container, edges: .top)
     .background(MirrorWindowLevel(alwaysOnTop: alwaysOnTop).allowsHitTesting(false))
-    .background(WindowGlassBackground().allowsHitTesting(false))
+    .background(MirrorWindowChrome().allowsHitTesting(false))
     .navigationTitle(model.selected?.name ?? "iPhoneMirror")
-    .navigationSubtitle(model.selected.map { "iOS \($0.version)" } ?? "")
     .alert(
       "Could not capture screenshot",
       isPresented: Binding(
@@ -276,6 +182,16 @@ struct MirrorWindow: View {
       Button("OK", role: .cancel) { model.screenshotError = nil }
     } message: {
       Text(model.screenshotError ?? "")
+    }
+    .alert(
+      "Screen recording",
+      isPresented: Binding(
+        get: { recorder.notice != nil }, set: { if !$0 { recorder.notice = nil } }
+      )
+    ) {
+      Button("OK", role: .cancel) { recorder.notice = nil }
+    } message: {
+      Text(recorder.notice ?? "")
     }
     .sheet(isPresented: $model.showingDiagnostics) { ConnectionDiagnosticsView(model: model) }
     .alert(
@@ -288,15 +204,6 @@ struct MirrorWindow: View {
       Button("OK", role: .cancel) { model.rotationNotice = nil }
     } message: {
       Text(model.rotationNotice ?? "")
-    }
-  }
-  private var speakerIcon: String {
-    guard !model.audioMuted else { return "speaker.slash.fill" }
-    switch model.audioVolume {
-    case ..<0.01: return "speaker.fill"
-    case ..<0.34: return "speaker.wave.1.fill"
-    case ..<0.67: return "speaker.wave.2.fill"
-    default: return "speaker.wave.3.fill"
     }
   }
   private var connectionView: some View {
@@ -349,5 +256,89 @@ struct MirrorWindow: View {
       }.foregroundStyle(.tertiary).multilineTextAlignment(.center).padding(.bottom, 24)
         .padding(.horizontal, 20)
     }.frame(maxWidth: .infinity, maxHeight: .infinity)
+      // Shown on the phone's dark screen, whatever the Mac's appearance.
+      .background(Color.black).environment(\.colorScheme, .dark)
+  }
+}
+
+/// Simulator-style floating title bar: traffic lights (placed by MirrorWindowChrome), the
+/// iPhone's name and status, and the most used hardware actions. Everything else lives in
+/// the menu bar.
+struct MirrorTitleBar: View {
+  @ObservedObject var model: MirrorModel
+  @ObservedObject var recorder: RecordingController
+  var body: some View {
+    HStack(spacing: 10) {
+      VStack(alignment: .leading, spacing: 1) {
+        Text(model.selected?.name ?? "iPhoneMirror")
+          .font(.system(size: 13, weight: .semibold))
+        if let subtitle {
+          Text(subtitle.text).font(.system(size: 11)).foregroundStyle(subtitle.style)
+            .monospacedDigit()
+        }
+      }
+      .lineLimit(1)
+      .padding(.leading, TitleBarMetrics.trafficLightsWidth)
+      Spacer(minLength: 0)
+      HStack(spacing: 2) {
+        Button {
+          model.home()
+        } label: {
+          Image(systemName: "house")
+        }.help("Home ⌘1").accessibilityLabel("Home").disabled(!model.canControl)
+        Button {
+          model.appSwitcher()
+        } label: {
+          Image(systemName: "square.on.square")
+        }.help("App Switcher ⌘2").accessibilityLabel("App Switcher").disabled(!model.canControl)
+        Button {
+          model.saveScreenshot()
+        } label: {
+          Image(systemName: "camera")
+        }.help("Save screenshot ⌘S · Copy screenshot ⇧⌘C").accessibilityLabel("Save screenshot")
+          .disabled(!model.canCaptureScreenshot)
+      }
+      .buttonStyle(TitleBarButtonStyle())
+      .padding(3)
+      .background(Capsule().fill(Color.primary.opacity(0.06)))
+      .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
+    }
+    .padding(.horizontal, 6)
+    .frame(maxWidth: .infinity, minHeight: TitleBarMetrics.height, maxHeight: TitleBarMetrics.height)
+    .contentShape(Rectangle())
+    .gesture(WindowDragGesture())
+    .allowsWindowActivationEvents(true)
+    .glassEffect(.regular, in: .rect(cornerRadius: 17))
+    .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
+  }
+  private var subtitle: (text: String, style: Color)? {
+    if recorder.recording {
+      return (
+        String(format: "Recording %d:%02d", recorder.elapsed / 60, recorder.elapsed % 60), .red
+      )
+    }
+    if model.automationEnabled {
+      return (
+        model.automationBusy ? "Agent controlling iPhone" : "Agent access enabled", .accentColor
+      )
+    }
+    return model.selected.map { ("iOS \($0.version)", .secondary) }
+  }
+}
+
+private struct TitleBarButtonStyle: ButtonStyle {
+  @Environment(\.isEnabled) private var isEnabled
+  @State private var hovering = false
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .font(.system(size: 14, weight: .medium))
+      .foregroundStyle(isEnabled ? .primary : .tertiary)
+      .frame(width: 32, height: 28)
+      .background(
+        Capsule().fill(
+          Color.primary.opacity(configuration.isPressed ? 0.16 : hovering && isEnabled ? 0.08 : 0))
+      )
+      .contentShape(Capsule())
+      .onHover { hovering = $0 }
   }
 }
