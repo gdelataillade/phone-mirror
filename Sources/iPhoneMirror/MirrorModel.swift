@@ -267,7 +267,19 @@ import SwiftUI
   }
   func fitWindow() { fitWindowEpoch &+= 1 }
   func rotate(clockwise: Bool = true) {
-    guard canControl, let frame = session?.mailbox.latest() else { return }
+    if ProcessInfo.processInfo.environment["PM_TRACE"] != nil {
+      traceLog(
+        "rotate \(clockwise ? "right" : "left"): connected=\(connected) picture=\(hasPicture) "
+          + "pending=\(rotation.isPending) canControl=\(canControl)")
+    }
+    guard canControl, let frame = session?.mailbox.latest() else {
+      // A menu item can fire after control lapsed; say why rather than doing nothing. A
+      // repeat press while already rotating is simply ignored.
+      if hasPicture && !rotation.isPending {
+        rotationNotice = "Rotation is unavailable until the video recovers. Try again in a moment."
+      }
+      return
+    }
     releaseInputs()
     rotationNotice = nil
     rotationLocked = false
