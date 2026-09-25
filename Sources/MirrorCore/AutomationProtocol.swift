@@ -172,9 +172,26 @@ public enum AutomationPort {
   }
 }
 
+/// Buttons the `button` action can press. Values are the native command 13 IDs;
+/// Home keeps its existing command.
+public enum HardwareButton: String {
+  case home, lock
+  case volumeUp = "volume_up"
+  case volumeDown = "volume_down"
+  /// nil for Home, which uses native command 5.
+  public var nativeID: UInt32? {
+    switch self {
+    case .home: nil
+    case .lock: 1
+    case .volumeUp: 2
+    case .volumeDown: 3
+    }
+  }
+}
+
 public struct AutomationAction {
   public enum Operation: String {
-    case tap, swipe, type, key, home
+    case tap, swipe, type, key, home, button
     case appSwitcher = "app_switcher"
     case spotlight
     case controlCenter = "control_center"
@@ -191,6 +208,7 @@ public struct AutomationAction {
   public let text: String
   public let key: UInt32
   public let clockwise: Bool
+  public let button: HardwareButton
 
   public init(data: Data) throws {
     guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -204,6 +222,7 @@ public struct AutomationAction {
     case .type: fields.insert("text")
     case .key: fields.insert("key")
     case .rotate: fields.insert("direction")
+    case .button: fields.insert("button")
     default: break
     }
     guard Set(json.keys).isSubset(of: fields) else {
@@ -267,6 +286,14 @@ public struct AutomationAction {
       clockwise = direction == "right"
     } else {
       clockwise = true
+    }
+    if operation == .button {
+      guard let name = json["button"] as? String, let value = HardwareButton(rawValue: name) else {
+        throw AutomationFailure("button must be home, lock, volume_up or volume_down")
+      }
+      button = value
+    } else {
+      button = .home
     }
   }
 }

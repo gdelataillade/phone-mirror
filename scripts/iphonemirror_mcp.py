@@ -62,6 +62,8 @@ TOOLS = [
     tool("key", "Press a named keyboard key on the iPhone.",
          {"key": {"type": "string", "enum": ["enter", "backspace", "tab", "escape", "left", "right", "up", "down", "space"]}}, ("key",)),
     tool("home", "Go to the iPhone Home Screen."),
+    tool("button", "Press a hardware button. lock turns the screen off and ends control until someone unlocks the phone by hand; volume_up/volume_down change the volume.",
+         {"button": {"type": "string", "enum": ["home", "lock", "volume_up", "volume_down"]}}, ("button",)),
     tool("app_switcher", "Open the iPhone app switcher."),
     tool("spotlight", "Open iPhone Spotlight search."),
     tool("control_center", "Open iPhone Control Center."),

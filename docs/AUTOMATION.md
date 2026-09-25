@@ -83,6 +83,7 @@ maps these through the current orientation to the native digitizer.
 | `type` | text | Explicit paste into focused field; replaces the iPhone clipboard; max 65536 UTF-8 bytes, no NUL |
 | `key` | key | enter, backspace, tab, escape, left, right, up, down, space |
 | `home` | — | Home button |
+| `button` | button: home, lock, volume_up or volume_down | Short hardware button press. **lock** turns the screen off and ends control until someone unlocks the phone by hand; there is no unlock action |
 | `app_switcher` | — | App Switcher |
 | `spotlight` | — | Spotlight gesture; use from Home |
 | `control_center` | — | Control Center gesture |

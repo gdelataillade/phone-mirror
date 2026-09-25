@@ -45,12 +45,27 @@ final class AutomationTests: XCTestCase {
       "{\"op\":\"home\",\"sessionID\":\"wrong\"}",
       "{\"op\":\"type\",\"text\":\"\"}",
       "{\"op\":\"rotate\",\"direction\":\"up\"}",
+      "{\"op\":\"button\"}",
+      "{\"op\":\"button\",\"button\":\"siri\"}",
+      "{\"op\":\"button\",\"button\":1}",
+      "{\"op\":\"home\",\"button\":\"lock\"}",
       "{\"op\":\"tap\",\"x\":0.5,\"y\":0.5,\"duration\":30}",
     ] { XCTAssertThrowsError(try AutomationAction(data: Data(json.utf8)), json) }
     let text = try JSONSerialization.data(withJSONObject: [
       "op": "type", "text": String(repeating: "é", count: 32769),
     ])
     XCTAssertThrowsError(try AutomationAction(data: text))
+  }
+  func testButtonActionsMapToFixedNativeIDs() throws {
+    let expected: [String: UInt32?] = [
+      "home": nil, "lock": 1, "volume_up": 2, "volume_down": 3,
+    ]
+    for (name, id) in expected {
+      let action = try AutomationAction(
+        data: Data("{\"op\":\"button\",\"button\":\"\(name)\"}".utf8))
+      XCTAssertEqual(action.operation, .button)
+      XCTAssertEqual(action.button.nativeID, id, name)
+    }
   }
   @MainActor func testLandscapeTapMapsUprightScreenshotToNaturalDigitizer() async throws {
     let action = try AutomationAction(data: Data("{\"op\":\"tap\",\"x\":0.25,\"y\":0.75}".utf8))

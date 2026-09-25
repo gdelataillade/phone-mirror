@@ -90,7 +90,7 @@ extension MirrorModel {
         "width": Int(screenSize.width), "height": Int(screenSize.height),
         "fps": fps, "busy": automationBusy, "status": status,
         "capabilities": [
-          "screenshot", "tap", "swipe", "type", "key", "home",
+          "screenshot", "tap", "swipe", "type", "key", "home", "button",
           "app_switcher", "spotlight", "control_center", "rotate", "release",
         ],
       ]
@@ -147,6 +147,13 @@ extension MirrorModel {
         throw AutomationFailure(409, "Paste could not be queued")
       }
     case .home: try send(5)
+    case .button:
+      if let id = action.button.nativeID {
+        try validate()
+        guard native.send(13, id) else { throw AutomationFailure(409, "Input queue unavailable") }
+      } else {
+        try send(5)
+      }
     case .appSwitcher: try send(8)
     case .spotlight: try send(11)
     case .controlCenter: try send(12)

@@ -961,6 +961,16 @@ async fn input_loop(
                         }
                     }
                 }
+                // A fixed set of hardware buttons by ID; never an arbitrary HID usage.
+                13 => {
+                    let Some((page, usage)) = hardware_button(a) else {
+                        return Ok(());
+                    };
+                    release(&mut hid, &mut indigo, surface, &mut touch, &mut keys).await;
+                    indigo.send_button(page, usage, ButtonState::Down).await?;
+                    tokio::time::sleep(Duration::from_millis(80)).await;
+                    indigo.send_button(page, usage, ButtonState::Up).await?;
+                }
                 // Not an edge gesture (it starts mid-screen), so this is a synthesized
                 // drag on the raw touchscreen surface rather than an IndigoDigitizerEvent.
                 // Best-effort starting geometry; unverified against a live device.
@@ -994,6 +1004,16 @@ async fn input_loop(
     )
     .await;
 }
+/// Command 13's button IDs → (HID usage page, usage). Consumer-page codes as
+/// used for the physical side and volume buttons.
+fn hardware_button(id: u32) -> Option<(u64, u64)> {
+    match id {
+        1 => Some((0x0c, 0x30)), // Power: lock/sleep
+        2 => Some((0x0c, 0xe9)), // Volume up
+        3 => Some((0x0c, 0xea)), // Volume down
+        _ => None,
+    }
+}
 async fn release(
     hid: &mut UniversalHidServiceClient<Box<dyn ReadWrite>>,
     indigo: &mut IndigoHidClient<Box<dyn ReadWrite>>,
@@ -1015,6 +1035,20 @@ async fn release(
         }
     };
     let _ = tokio::time::timeout(Duration::from_millis(700), cleanup).await;
+}
+
+#[cfg(test)]
+mod button_tests {
+    use super::hardware_button;
+    #[test]
+    fn only_known_button_ids_map_to_hid_usages() {
+        assert_eq!(hardware_button(1), Some((0x0c, 0x30)));
+        assert_eq!(hardware_button(2), Some((0x0c, 0xe9)));
+        assert_eq!(hardware_button(3), Some((0x0c, 0xea)));
+        for id in [0, 4, 0x30, 0xe9, u32::MAX] {
+            assert_eq!(hardware_button(id), None);
+        }
+    }
 }
 
 #[cfg(test)]

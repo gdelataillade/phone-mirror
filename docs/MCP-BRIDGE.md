@@ -56,6 +56,7 @@ shape, substituting their actual absolute paths:
 | `iphone_type` | `text` for the focused field; may replace the phone clipboard. |
 | `iphone_key` | `key`: `enter`, `backspace`, `tab`, `escape`, `left`, `right`, `up`, `down`, `space`. |
 | `iphone_home` | Go Home. |
+| `iphone_button` | `button`: `home`, `lock`, `volume_up`, `volume_down`. `lock` ends control until the phone is unlocked by hand. |
 | `iphone_app_switcher` | Open the app switcher. |
 | `iphone_spotlight` | Open Spotlight search. |
 | `iphone_control_center` | Open Control Center. |

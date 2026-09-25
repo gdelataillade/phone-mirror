@@ -26,7 +26,8 @@ uint32_t pm_event_value(const PMEvent *event, uint32_t field); // width,height,s
 void pm_event_free(PMEvent *event);
 // 1 touch down/move, 2 touch up, 3 key down, 4 key up, 5 Home, 6 release all,
 // 7 request keyframe, 8 App Switcher, 9 rotate right, 10 rotate left,
-// 11 Spotlight, 12 Control Center.
+// 11 Spotlight, 12 Control Center, 13 hardware button (a: 1 lock, 2 volume up,
+// 3 volume down; other values are ignored).
 // Coordinates normalized 0…65535; key is USB HID usage.
 int32_t pm_command(PMHandle *handle, uint32_t kind, uint32_t a, uint32_t b);
 // Explicit one-shot UTF-8 paste. Maximum 64 KiB. Replaces the device clipboard.

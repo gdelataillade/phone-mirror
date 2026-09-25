@@ -72,14 +72,14 @@ class ProtocolTests(unittest.TestCase):
     def test_catalog_and_all_action_mappings(self):
         initialize(self.server)
         catalog = self.server.handle(request("tools/list"))["result"]["tools"]
-        self.assertEqual(len(catalog), 12)
+        self.assertEqual(len(catalog), 13)
         for definition in catalog:
             self.assertFalse(definition["inputSchema"]["additionalProperties"])
         arguments = {
             "tap": {"x": 0.2, "y": 0.3, "duration": 0.5},
             "swipe": {"x": 0.2, "y": 0.3, "toX": 0.4, "toY": 0.8},
             "type": {"text": "hello \U0001f44b"}, "key": {"key": "enter"},
-            "rotate": {"direction": "left"},
+            "rotate": {"direction": "left"}, "button": {"button": "volume_up"},
         }
         for definition in catalog:
             name = definition["name"]
@@ -103,6 +103,8 @@ class ProtocolTests(unittest.TestCase):
             ("iphone_home", {"extra": "ignored?"}),
             ("iphone_key", {"key": "power"}),
             ("iphone_rotate", {"direction": "up"}),
+            ("iphone_button", {}),
+            ("iphone_button", {"button": "siri"}),
             ("iphone_type", {"text": ""}),
             ("iphone_type", {"text": "bad\0text"}),
             ("iphone_type", {"text": "\ud800"}),
@@ -167,7 +169,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(process.stderr, "")
         responses = [json.loads(line) for line in process.stdout.splitlines()]
         self.assertEqual([r["id"] for r in responses], [1, 2])
-        self.assertEqual(len(responses[1]["result"]["tools"]), 12)
+        self.assertEqual(len(responses[1]["result"]["tools"]), len(bridge.TOOLS))
 
 
 class HTTPTests(unittest.TestCase):
