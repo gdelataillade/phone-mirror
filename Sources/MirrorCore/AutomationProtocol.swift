@@ -302,7 +302,8 @@ public struct AutomationAction {
 /// as strictly as actions, then handed to the native layer as canonical JSON.
 public struct AppRequest: Equatable {
   public enum Kind: Equatable {
-    case list(system: Bool)
+    /// All user-visible apps, or only developer-installed builds.
+    case list(developerOnly: Bool)
     case launch(bundleID: String, restart: Bool)
     case terminate(bundleID: String)
   }
@@ -318,13 +319,13 @@ public struct AppRequest: Equatable {
   }
 
   public init(listQuery query: [String: String]) throws {
-    guard Set(query.keys).isSubset(of: ["system"]) else {
+    guard Set(query.keys).isSubset(of: ["scope"]) else {
       throw AutomationFailure(400, "Unsupported query parameter")
     }
-    switch query["system"] ?? "false" {
-    case "false": kind = .list(system: false)
-    case "true": kind = .list(system: true)
-    default: throw AutomationFailure(400, "system must be true or false")
+    switch query["scope"] ?? "all" {
+    case "all": kind = .list(developerOnly: false)
+    case "developer": kind = .list(developerOnly: true)
+    default: throw AutomationFailure(400, "scope must be all or developer")
     }
     sessionID = nil
   }
@@ -378,7 +379,8 @@ public struct AppRequest: Equatable {
   public var nativeJSON: String {
     let object: [String: Any]
     switch kind {
-    case .list(let system): object = ["op": "list", "system": system]
+    case .list(let developerOnly):
+      object = ["op": "list", "scope": developerOnly ? "developer" : "all"]
     case .launch(let id, let restart): object = ["op": "launch", "bundleID": id, "restart": restart]
     case .terminate(let id): object = ["op": "terminate", "bundleID": id]
     }

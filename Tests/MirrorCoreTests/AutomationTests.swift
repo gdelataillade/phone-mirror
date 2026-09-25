@@ -57,10 +57,13 @@ final class AutomationTests: XCTestCase {
     XCTAssertThrowsError(try AutomationAction(data: text))
   }
   func testAppRequestsValidateStrictlyAndProduceCanonicalNativeJSON() throws {
-    XCTAssertEqual(try AppRequest(listQuery: [:]).kind, .list(system: false))
-    XCTAssertEqual(try AppRequest(listQuery: ["system": "true"]).kind, .list(system: true))
+    XCTAssertEqual(try AppRequest(listQuery: [:]).kind, .list(developerOnly: false))
+    XCTAssertEqual(try AppRequest(listQuery: ["scope": "all"]).kind, .list(developerOnly: false))
     XCTAssertEqual(
-      try AppRequest(listQuery: [:]).nativeJSON, "{\"op\":\"list\",\"system\":false}")
+      try AppRequest(listQuery: ["scope": "developer"]).kind, .list(developerOnly: true))
+    XCTAssertEqual(
+      try AppRequest(listQuery: ["scope": "developer"]).nativeJSON,
+      "{\"op\":\"list\",\"scope\":\"developer\"}")
     let session = UUID().uuidString
     let launch = try AppRequest(
       path: "/v1/apps/launch",
@@ -78,7 +81,7 @@ final class AutomationTests: XCTestCase {
     XCTAssertEqual(stop.kind, .terminate(bundleID: "com.example.app-1"))
     XCTAssertFalse(try AppRequest(listQuery: [:]).changesScreen)
 
-    for query in [["system": "1"], ["system": "yes"], ["all": "true"]] {
+    for query in [["scope": "system"], ["scope": "1"], ["system": "true"]] {
       XCTAssertThrowsError(try AppRequest(listQuery: query), "\(query)")
     }
     let invalid: [(String, String)] = [

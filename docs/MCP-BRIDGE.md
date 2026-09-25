@@ -62,7 +62,7 @@ shape, substituting their actual absolute paths:
 | `iphone_control_center` | Open Control Center. |
 | `iphone_rotate` | `direction`: `left` or `right`. |
 | `iphone_release` | Release held input. |
-| `iphone_list_apps` | Installed apps with `bundleID`, version and `running`; `system: true` includes Apple's apps. |
+| `iphone_list_apps` | Installed apps with `bundleID`, version and `running`. `scope`: `developer` (default, your development builds) or `all` (every app, possibly hundreds). |
 | `iphone_launch_app` | `bundleID`; optional `restart` to kill a running instance first. Returns the `pid`. |
 | `iphone_terminate_app` | `bundleID`; force-quits the app. |
 
@@ -106,7 +106,7 @@ this token into client configuration or logs. Requests use
 | `GET /v1/status` | Return JSON connection and observation metadata. |
 | `GET /v1/screenshot` | Return JSON with base64 `image`, PNG `mimeType`, dimensions and observation metadata. |
 | `POST /v1/actions` | Send JSON such as `{"op":"tap","x":0.5,"y":0.5,"sessionID":"…","observationID":"…"}`. |
-| `GET /v1/apps?system=…` | Used by `iphone_list_apps`. |
+| `GET /v1/apps?scope=…` | Used by `iphone_list_apps`. |
 | `POST /v1/apps/launch`, `/v1/apps/terminate` | Used by `iphone_launch_app` and `iphone_terminate_app`, with `bundleID` and optional `sessionID`. |
 
 Actions use the names in the tool table without the `iphone_` prefix, except

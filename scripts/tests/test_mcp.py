@@ -102,11 +102,11 @@ class ProtocolTests(unittest.TestCase):
     def test_app_tools_map_to_app_endpoints(self):
         initialize(self.server)
         self.assertFalse(self.call("iphone_list_apps")["result"]["isError"])
-        self.assertFalse(self.call("iphone_list_apps", {"system": True})["result"]["isError"])
+        self.assertFalse(self.call("iphone_list_apps", {"scope": "all"})["result"]["isError"])
         self.assertFalse(self.call("iphone_launch_app", {"bundleID": "com.example.app-1", "restart": True})["result"]["isError"])
         self.assertEqual(self.api.calls, [
-            ("GET", "/v1/apps?system=false", None),
-            ("GET", "/v1/apps?system=true", None),
+            ("GET", "/v1/apps?scope=developer", None),
+            ("GET", "/v1/apps?scope=all", None),
             ("POST", "/v1/apps/launch", {"bundleID": "com.example.app-1", "restart": True}),
         ])
         self.assertEqual(self.api.timeouts, [bridge.APP_REQUEST_TIMEOUT] * 3)
@@ -131,8 +131,8 @@ class ProtocolTests(unittest.TestCase):
             ("iphone_type", {"text": "x" * 16001}),
             ("iphone_home", {"sessionID": ""}),
             ("iphone_home", {"observationID": ""}),
-            ("iphone_list_apps", {"system": "true"}),
-            ("iphone_list_apps", {"system": 1}),
+            ("iphone_list_apps", {"system": True}),
+            ("iphone_list_apps", {"scope": "system"}),
             ("iphone_launch_app", {}),
             ("iphone_launch_app", {"bundleID": ""}),
             ("iphone_launch_app", {"bundleID": "com.x/../y"}),

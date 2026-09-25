@@ -53,7 +53,7 @@ body limit 128 KiB. Errors have `{ "error": "..." }` and a non-200 HTTP status.
 | `GET /v1/screenshot` | Upright PNG as base64 `image`, mimeType, width/height, sessionID, observationID, frameID and ageSeconds |
 | `GET /v1/screenshot?format=png` | The same PNG as the raw response body; metadata in `X-iPhoneMirror-Width`, `-Height`, `-SessionID`, `-ObservationID`, `-FrameID` and `-AgeSeconds` headers |
 | `POST /v1/actions` | Validated input action; returns accepted and a sessionID when connected |
-| `GET /v1/apps` | Installed apps: name, bundleID, version, build, system, developer and running. Add `?system=true` to include Apple's built-in apps |
+| `GET /v1/apps` | Installed apps (App Store, Apple and developer builds): name, bundleID, version, build, running, developer and apple. `?scope=developer` lists only builds installed from Xcode or other developer tools |
 | `POST /v1/apps/launch` | `{"bundleID": "…", "restart": false}` launches the app in the foreground and returns its `pid`; `restart: true` kills a running instance first |
 | `POST /v1/apps/terminate` | `{"bundleID": "…"}` force-quits the app's running processes and returns their `pids`; 409 when it is not running |
 

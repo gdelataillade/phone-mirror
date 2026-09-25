@@ -78,8 +78,8 @@ TOOLS = [
     tool("rotate", "Request iPhone screen rotation left or right; observe to verify the app accepted rotation.",
          {"direction": {"type": "string", "enum": ["left", "right"]}}, ("direction",)),
     tool("release", "Release held touch and keyboard input for the current connection."),
-    tool("list_apps", "List installed apps with name, bundleID, version and whether each is running. Set system to include Apple's built-in apps.",
-         {"system": {"type": "boolean", "default": False}}, read_only=True),
+    tool("list_apps", "List installed apps with name, bundleID, version and whether each is running. scope developer (default) lists only builds installed from Xcode or other developer tools; all lists every app, which can be several hundred.",
+         {"scope": {"type": "string", "enum": ["developer", "all"], "default": "developer"}}, read_only=True),
     tool("launch_app", "Launch an installed app by bundle ID, bringing it to the foreground. Set restart to kill a running instance first. Observe afterward to verify.",
          {"bundleID": BUNDLE_ID, "restart": {"type": "boolean", "default": False}}, ("bundleID",), guards=("sessionID",)),
     tool("terminate_app", "Force-quit a running app by bundle ID. Unsaved state in that app is lost.",
@@ -269,9 +269,9 @@ class Server:
             elif name == "iphone_screenshot":
                 content = screenshot_content(self.api.request("GET", "/v1/screenshot"))
             elif name == "iphone_list_apps":
-                system = "true" if arguments.get("system") else "false"
+                scope = arguments.get("scope", "developer")
                 content = [text_content(self.api.request(
-                    "GET", "/v1/apps?system=" + system, timeout=APP_REQUEST_TIMEOUT))]
+                    "GET", "/v1/apps?scope=" + scope, timeout=APP_REQUEST_TIMEOUT))]
             elif name in APP_ENDPOINTS:
                 content = [text_content(self.api.request(
                     "POST", APP_ENDPOINTS[name], arguments, timeout=APP_REQUEST_TIMEOUT))]
