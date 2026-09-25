@@ -839,3 +839,37 @@ rotation, gestures interrupted by cable removal/lock/sleep, every key and
 system action, Unicode text, and use from a freshly registered Codex MCP
 session. The checklist is in [AUTOMATION.md](docs/AUTOMATION.md); Codex
 registration instructions are in [MCP-BRIDGE.md](docs/MCP-BRIDGE.md).
+
+## Apps, hardware buttons, raw screenshots and fixed port, 25 September
+
+Added `GET /v1/apps`, `POST /v1/apps/launch` and `POST /v1/apps/terminate`,
+a `button` action (lock, volume_up, volume_down, home), `format=png` and
+`scale=full` screenshots, and **Automation → Port** (Automatic, 8090 or custom).
+
+Automated: 45 Rust, 65 Swift and 15 Python bridge tests pass; release build
+succeeds.
+
+Running app, no phone, `curl` on port 8090: `localhost` Host accepted,
+missing token 401, unknown query parameters and invalid values 400, unknown
+endpoints (including `/v1/apps/uninstall`) 404, device-only calls 409. With
+8090 already taken, enabling access showed "Port 8090 is already in use.",
+stayed off and wrote no discovery file; enabling after the port was free worked.
+
+Physical iPhone 17 / iOS 27.0 over USB:
+
+- Screenshots: `format=png&scale=full` returned a 1206 × 2624 PNG body with
+  matching `X-iPhoneMirror-*` headers; the default is 589 × 1280.
+- **CoreDevice's one-shot `listapps` never replied on iOS 27** (20 s timeout,
+  mirroring unaffected). The streaming app list answers in about 0.1 s and is
+  now used for listing and terminate. `includeDefaultApps` is what adds App
+  Store apps: 274 apps in total, 9 developer builds with `scope=developer`.
+- Launching Settings by bundle ID opened it (screenshot verified) and marked it
+  running. Launching it again without `restart` returned the same pid.
+  Terminate killed it (Home Screen shown, running false); a second terminate
+  returned 409. `restart: true` returned a new pid each time. Unknown bundle
+  IDs return 404 for both launch and terminate.
+- Volume up and down each showed the Ringer indicator in the Dynamic Island.
+- Lock turned the screen off; the stream dropped to 0 FPS while status still
+  reported `canControl: true`.
+- Real stdio bridge: 16 tools listed; `iphone_list_apps` (developer and all),
+  a 404 terminate and an invalid button were returned as expected.
