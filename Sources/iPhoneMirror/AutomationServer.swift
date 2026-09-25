@@ -13,15 +13,22 @@ import Network
   private var peers: [UUID: AutomationPeer] = [:]
   private let token = UUID().uuidString + UUID().uuidString
   private var port: UInt16 = 0
+  private let requestedPort: UInt16
   private let handler: Handler
   private let state: (String, Bool) -> Void
-  init(handler: @escaping Handler, state: @escaping (String, Bool) -> Void) {
+  /// requestedPort 0 lets the system pick a free port.
+  init(
+    port requestedPort: UInt16 = 0, handler: @escaping Handler,
+    state: @escaping (String, Bool) -> Void
+  ) {
+    self.requestedPort = requestedPort
     self.handler = handler
     self.state = state
   }
   func start() throws {
     let parameters = NWParameters.tcp
-    parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+    parameters.requiredLocalEndpoint = .hostPort(
+      host: "127.0.0.1", port: NWEndpoint.Port(rawValue: requestedPort) ?? .any)
     let listener = try NWListener(using: parameters)
     self.listener = listener
     listener.stateUpdateHandler = { [weak self] update in
@@ -38,9 +45,15 @@ import Network
             self.stop()
             self.state("Agent access could not save its local connection file.", false)
           }
-        case .failed:
+        // A taken fixed port can report waiting rather than failed; scripts expect
+        // that exact port, so never fall back to another one.
+        case .failed(let error), .waiting(let error):
           self.stop()
-          self.state("Agent access could not start its local listener.", false)
+          if case .posix(.EADDRINUSE) = error {
+            self.state("Port \(self.requestedPort) is already in use.", false)
+          } else {
+            self.state("Agent access could not start its local listener.", false)
+          }
         default: break
         }
       }

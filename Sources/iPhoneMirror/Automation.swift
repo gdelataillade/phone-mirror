@@ -10,7 +10,7 @@ extension MirrorModel {
     automationEnabled = enabled
     automationStatus = enabled ? "Starting agent access…" : "Agent access off"
     guard enabled else { return }
-    let server = AutomationServer { [weak self] request in
+    let server = AutomationServer(port: UInt16(automationPort)) { [weak self] request in
       guard let self, self.automationEnabled else {
         throw AutomationFailure(503, "Agent access off")
       }
@@ -28,6 +28,32 @@ extension MirrorModel {
   }
 
   func stopAgentAction() { releaseInputs() }
+
+  /// Restarts a running listener so the new port takes effect immediately.
+  func setAutomationPort(_ port: Int) {
+    guard port != automationPort else { return }
+    automationPort = port
+    if automationEnabled { setAutomationEnabled(true) }
+  }
+
+  func chooseCustomAutomationPort() {
+    let alert = NSAlert()
+    alert.messageText = "Agent Access Port"
+    alert.informativeText = "Enter a port from 1024 to 65535. Agents still need the token."
+    let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 24))
+    field.stringValue = String(
+      automationPort == AutomationPort.automatic ? AutomationPort.preset : automationPort)
+    alert.accessoryView = field
+    alert.addButton(withTitle: "Use Port")
+    alert.addButton(withTitle: "Cancel")
+    alert.window.initialFirstResponder = field
+    guard alert.runModal() == .alertFirstButtonReturn else { return }
+    guard let port = AutomationPort.parse(field.stringValue) else {
+      automationStatus = "Invalid port. Use 1024–65535."
+      return
+    }
+    setAutomationPort(port)
+  }
 
   private func observationID(_ id: UUID, _ frame: VideoFrame) -> String {
     "\(id.uuidString):\(frame.orientation):\(Int(frame.size.width))x\(Int(frame.size.height))"

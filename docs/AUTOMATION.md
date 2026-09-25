@@ -17,15 +17,25 @@ While enabled, the app writes an owner-readable connection file:
 
 `~/Library/Application Support/iPhoneMirror/automation.json`
 
-Its JSON contains `url` (`http://127.0.0.1:<port>`) and `token`. The port is
-assigned by the OS; the token changes on every enable. Read this file per
+Its JSON contains `url` (`http://127.0.0.1:<port>`) and `token`. By default the
+port is assigned by the OS; **Automation → Port** can pin it to 8090 or a custom
+port (1024–65535). A pinned port that is already taken turns access off with a
+status message instead of silently moving. The token changes on every enable,
+including when the port changes. Read this file per
 request and send `Authorization: Bearer <token>`. Do not commit, print, share,
 or put the token into an AI prompt. The bridge reads it without exposing it.
 Disable/quit removes this instance's file. A crash can leave an unusable stale
 file; enabling again replaces it.
 
+With a pinned port, a plain shell script can read the token with `plutil`:
+
+```sh
+TOKEN=$(plutil -extract token raw ~/Library/Application\ Support/iPhoneMirror/automation.json)
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8090/v1/status
+```
+
 The listener binds only to IPv4 loopback. Requests with an Origin header,
-wrong Host, missing token, oversized bodies, ambiguous length, transfer encoding
+a Host other than `127.0.0.1:<port>` or `localhost:<port>`, missing token, oversized bodies, ambiguous length, transfer encoding
 or HTTP pipelining are rejected. No CORS is provided. This protects against web
 pages; it is not an isolation boundary against other processes running as your
 Mac user. Clients authorized through this token can see the phone's current

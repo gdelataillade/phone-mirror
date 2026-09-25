@@ -69,9 +69,9 @@ public struct AutomationRequest {
     guard headers["origin"] == nil else {
       throw AutomationFailure(403, "Browser origins are not allowed")
     }
-    guard headers["host"] == "127.0.0.1:\(port)" else {
-      throw AutomationFailure(403, "Expected loopback Host")
-    }
+    // Literal loopback names only: a rebinding attacker's own domain never matches.
+    guard let host = headers["host"], ["127.0.0.1:\(port)", "localhost:\(port)"].contains(host)
+    else { throw AutomationFailure(403, "Expected loopback Host") }
     guard headers["authorization"] == "Bearer \(token)" else {
       throw AutomationFailure(401, "Bearer token required")
     }
@@ -82,6 +82,20 @@ public struct AutomationRequest {
           == "application/json"
       else { throw AutomationFailure(415, "Expected application/json") }
     }
+  }
+}
+
+/// The listener port preference. 0 picks a free port on every enable.
+public enum AutomationPort {
+  public static let automatic = 0
+  public static let preset = 8090
+  /// Unprivileged ports only, so a fixed port never needs elevated rights.
+  public static func parse(_ text: String) -> Int? {
+    let trimmed = text.trimmingCharacters(in: .whitespaces)
+    guard !trimmed.isEmpty, trimmed.allSatisfy({ $0 >= "0" && $0 <= "9" }),
+      let value = Int(trimmed), (1024...65535).contains(value)
+    else { return nil }
+    return value
   }
 }
 

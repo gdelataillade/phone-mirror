@@ -26,6 +26,12 @@ import SwiftUI
   @Published var automationEnabled = false
   @Published var automationBusy = false
   @Published var automationStatus = "Agent access off"
+  // Persisted; AutomationPort.automatic picks a free port on every enable.
+  @Published var automationPort: Int =
+    UserDefaults.standard.integer(forKey: "automationPort")
+  {
+    didSet { UserDefaults.standard.set(automationPort, forKey: "automationPort") }
+  }
   var automationCapturing = false
   var automationServer: AutomationServer?
   // Defaults to muted: audio only starts once someone explicitly opts in.

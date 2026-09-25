@@ -1,4 +1,5 @@
 import AppKit
+import MirrorCore
 import SwiftUI
 
 @main struct iPhoneMirrorApp: App {
@@ -7,6 +8,10 @@ import SwiftUI
   @StateObject private var updater = Updater()
   @AppStorage("alwaysOnTop") private var alwaysOnTop = false
   @AppStorage("showDeviceBezel") private var showDeviceBezel = true
+  private var customPortTitle: String {
+    [AutomationPort.automatic, AutomationPort.preset].contains(model.automationPort)
+      ? "Custom…" : "Custom (\(model.automationPort))…"
+  }
   var body: some Scene {
     Window("iPhoneMirror", id: "mirror") {
       MirrorWindow(model: model, updater: updater)
@@ -80,6 +85,17 @@ import SwiftUI
         Toggle("Enable Agent Access", isOn: Binding(
           get: { model.automationEnabled }, set: { model.setAutomationEnabled($0) }))
         Text(model.automationStatus)
+        Menu("Port") {
+          Toggle("Automatic", isOn: Binding(
+            get: { model.automationPort == AutomationPort.automatic },
+            set: { if $0 { model.setAutomationPort(AutomationPort.automatic) } }))
+          Toggle("\(AutomationPort.preset)", isOn: Binding(
+            get: { model.automationPort == AutomationPort.preset },
+            set: { if $0 { model.setAutomationPort(AutomationPort.preset) } }))
+          Toggle(customPortTitle, isOn: Binding(
+            get: { ![AutomationPort.automatic, AutomationPort.preset].contains(model.automationPort) },
+            set: { _ in model.chooseCustomAutomationPort() }))
+        }
         Button("Stop Agent Action") { model.stopAgentAction() }
           .disabled(!model.automationBusy)
       }

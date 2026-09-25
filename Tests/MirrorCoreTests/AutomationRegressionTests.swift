@@ -24,7 +24,8 @@ final class AutomationRegressionTests: XCTestCase {
   func testGetStillRequiresAuthenticationAndExactLoopbackHost() throws {
     let invalid: [(String, Int)] = [
       ("Host: 127.0.0.1:1234\r\n", 401),
-      ("Host: localhost:1234\r\nAuthorization: Bearer test\r\n", 403),
+      ("Host: localhost:9999\r\nAuthorization: Bearer test\r\n", 403),
+      ("Host: 127.0.0.1\r\nAuthorization: Bearer test\r\n", 403),
       ("Host: attacker.example:1234\r\nAuthorization: Bearer test\r\n", 403),
       ("Host: 127.0.0.1:1234\r\nAuthorization: Bearer test\r\nOrigin: null\r\n", 403),
     ]
@@ -33,6 +34,22 @@ final class AutomationRegressionTests: XCTestCase {
       XCTAssertThrowsError(try request.authorize(token: "test", port: 1234)) {
         XCTAssertEqual(($0 as? AutomationFailure)?.status, status)
       }
+    }
+  }
+
+  func testLiteralLocalhostHostIsAcceptedForPlainCurl() throws {
+    let request = try XCTUnwrap(
+      AutomationRequest.parse(
+        wire("GET", headers: "Host: localhost:1234\r\nAuthorization: Bearer test\r\n")))
+    XCTAssertNoThrow(try request.authorize(token: "test", port: 1234))
+  }
+
+  func testPortPreferenceAcceptsOnlyUnprivilegedPorts() {
+    XCTAssertEqual(AutomationPort.parse("8090"), 8090)
+    XCTAssertEqual(AutomationPort.parse(" 1024 "), 1024)
+    XCTAssertEqual(AutomationPort.parse("65535"), 65535)
+    for text in ["", "80", "1023", "65536", "-8090", "+8090", "80.9", "8090a", "99999999999999999999"] {
+      XCTAssertNil(AutomationPort.parse(text), text)
     }
   }
 
