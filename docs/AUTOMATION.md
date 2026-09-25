@@ -2,9 +2,9 @@
 
 iPhoneMirror exposes its existing USB session to local tools. Open the app,
 connect an unlocked iPhone, then choose **Automation → Enable Agent Access**.
-The banner shows when access is enabled and when an agent gesture is running.
-**Stop Access** revokes access and cancels the current gesture. Access starts
-off on every app launch. Nothing is sent to an AI provider by the app itself.
+The window's subtitle shows when access is enabled and when an agent gesture is
+running. Choosing **Enable Agent Access** again revokes access and cancels the
+current gesture. Access starts off on every app launch. Nothing is sent to an AI provider by the app itself.
 
 For Codex and other MCP clients, use the [stdio MCP bridge](MCP-BRIDGE.md).
 An agent can observe a screenshot, tap/swipe/type, then observe again to test a

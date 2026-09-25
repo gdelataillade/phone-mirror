@@ -9,7 +9,7 @@ iPhone app or WebDriverAgent installation.
 
 1. Build and open iPhoneMirror, then connect your unlocked USB iPhone normally.
 2. Choose **Automation → Enable Agent Access**. Access starts disabled each time
-   the app launches. The visible banner includes **Stop Access**.
+   the app launches. The window's subtitle then reads "Agent access enabled".
 3. From the repository root, register the bridge:
 
    ```sh
@@ -133,7 +133,7 @@ socket timeout and no automatic retries. Discovery, input messages and response
 sizes are bounded. Screenshots are sent only through the calling MCP client;
 whether that client sends them to a model provider depends on its configuration.
 
-Use **Stop Access** to revoke access. **Automation → Stop Agent Action** cancels
+Turn off **Automation → Enable Agent Access** to revoke access. **Automation → Stop Agent Action** cancels
 an active gesture; Command-Escape also releases input and cancels the current
 action. These controls cannot undo an action already delivered to iOS.
 

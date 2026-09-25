@@ -1,10 +1,15 @@
 import MirrorCore
 import SwiftUI
 
-/// Decorative hardware frame. The stream already contains the camera cutout.
-struct FramedMirror: View {
-  @ObservedObject var model: MirrorModel
+/// The phone floating in the transparent window: its screen aspect-fitted to the available
+/// space, optionally inside a decorative hardware frame. The stream already contains the
+/// camera cutout.
+struct PhoneFrame<Screen: View>: View {
+  let screenSize: CGSize
   let showBezel: Bool
+  /// Builds the screen contents, given its corner radius and the total space (both sides
+  /// combined) the bezel reserves around it.
+  @ViewBuilder let screen: (_ cornerRadius: CGFloat, _ bezelInset: CGFloat) -> Screen
 
   var body: some View {
     GeometryReader { proxy in
@@ -12,10 +17,9 @@ struct FramedMirror: View {
       let available = CGSize(
         width: max(1, proxy.size.width - inset * 2),
         height: max(1, proxy.size.height - inset * 2))
-      let fitted = MirrorGeometry.contentRect(view: available, screen: model.screenSize).size
-      let size = showBezel ? fitted : proxy.size
-      let radius = showBezel ? min(size.width, size.height) * 0.12 : 0
-      MirrorSurface(model: model, cornerRadius: radius, bezelInset: inset * 2)
+      let size = MirrorGeometry.contentRect(view: available, screen: screenSize).size
+      let radius = min(size.width, size.height) * 0.12
+      screen(radius, inset * 2)
         .frame(width: size.width, height: size.height)
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .background {
@@ -31,9 +35,13 @@ struct FramedMirror: View {
               }
               .padding(-9)
               .shadow(color: .black.opacity(0.5), radius: 7, y: 4)
+              // Like Simulator, the hardware frame is a handle for moving the window.
+              .gesture(WindowDragGesture())
+              .allowsWindowActivationEvents(true)
           }
         }
-        .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+        // Hug the title bar, like Simulator; spare height stays below, out of sight.
+        .position(x: proxy.size.width / 2, y: inset + size.height / 2)
     }
   }
 }

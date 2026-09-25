@@ -168,23 +168,25 @@ final class MirrorView: MTKView, MTKViewDelegate {
       else { return }
       self.releaseAll()
       let visible = window.screen?.visibleFrame.size ?? CGSize(width: 1200, height: 900)
-      // Anchor on the window's own current content size, not this view's bounds: with the
-      // bezel on, this view is already an aspect-fitted rect inset within that content size,
-      // so it understates how much room the window actually has to work with.
+      // Anchor on the window's own current content size, not this view's bounds: this view
+      // is an aspect-fitted rect inset within that content size (below the title bar, and
+      // inside the bezel when shown), so it understates how much room the window has.
       let currentContent = window.contentView?.bounds.size ?? bounds.size
       let inset = bezelInset
+      let chrome = TitleBarMetrics.chromeHeight
       let aspect = presentation.size.width / presentation.size.height
-      let longSide = max(1, max(currentContent.width, currentContent.height) - inset)
+      let longSide = max(
+        1, max(currentContent.width - inset, currentContent.height - chrome - inset))
       var height = aspect > 1 ? longSide / aspect : longSide
       var width = height * aspect
       let scale = min(
-        1, (visible.width - 40 - inset) / width, (visible.height - 40 - inset) / height)
+        1, (visible.width - 40 - inset) / width, (visible.height - 40 - inset - chrome) / height)
       width *= scale
       height *= scale
       window.setContentSize(
         CGSize(
           width: max(360, width + inset),
-          height: max(aspect > 1 ? 360 : 580, height + inset)))
+          height: max(aspect > 1 ? 360 : 580, height + inset + chrome)))
     }
     fitWork = work
     // Give SwiftUI time to apply the landscape minimum window size first.
