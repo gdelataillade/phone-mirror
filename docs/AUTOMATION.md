@@ -1,0 +1,111 @@
+# Local automation API
+
+iPhoneMirror exposes its existing USB session to local tools. Open the app,
+connect an unlocked iPhone, then choose **Automation → Enable Agent Access**.
+The banner shows when access is enabled and when an agent gesture is running.
+**Stop Access** revokes access and cancels the current gesture. Access starts
+off on every app launch. Nothing is sent to an AI provider by the app itself.
+
+For Codex and other MCP clients, use the [stdio MCP bridge](MCP-BRIDGE.md).
+An agent can observe a screenshot, tap/swipe/type, then observe again to test a
+physical app. The app keeps sole ownership of the device connection; clients
+must not start a second screen-stream connection.
+
+## Discovery and authentication
+
+While enabled, the app writes an owner-readable connection file:
+
+`~/Library/Application Support/iPhoneMirror/automation.json`
+
+Its JSON contains `url` (`http://127.0.0.1:<port>`) and `token`. The port is
+assigned by the OS; the token changes on every enable. Read this file per
+request and send `Authorization: Bearer <token>`. Do not commit, print, share,
+or put the token into an AI prompt. The bridge reads it without exposing it.
+Disable/quit removes this instance's file. A crash can leave an unusable stale
+file; enabling again replaces it.
+
+The listener binds only to IPv4 loopback. Requests with an Origin header,
+wrong Host, missing token, oversized bodies, ambiguous length, transfer encoding
+or HTTP pipelining are rejected. No CORS is provided. This protects against web
+pages; it is not an isolation boundary against other processes running as your
+Mac user. Clients authorized through this token can see the phone's current
+screen and operate it while access is enabled.
+
+## Endpoints
+
+All responses are JSON and `Cache-Control: no-store`. HTTP/1.1, one request per
+connection. POST requires `Content-Type: application/json` and Content-Length;
+body limit 128 KiB. Errors have `{ "error": "..." }` and a non-200 HTTP status.
+
+| Method/path | Result |
+| --- | --- |
+| `GET /v1/status` | Connection/control readiness, sessionID, observationID, dimensions, decoded FPS, busy flag and capabilities |
+| `GET /v1/screenshot` | Upright PNG as base64 `image`, mimeType, width/height, sessionID, observationID, frameID and ageSeconds |
+| `POST /v1/actions` | Validated input action; returns accepted and a sessionID when connected |
+
+Screenshots contain stream pixels only, without window chrome or bezel. They
+are scaled to at most 1280 pixels on the long edge. They are the latest decoded
+frame, not a fresh camera capture or guaranteed post-action frame. An idle
+iPhone can reuse its last frame; use frameID/ageSeconds and visual verification.
+No screenshots or action text are saved to disk by the API.
+
+## Actions
+
+Every body requires `op`. Unknown properties, boolean coordinates, invalid
+numbers and out-of-range values are rejected. x/y use normalized coordinates
+from 0 to 1 with top-left origin in the **returned upright screenshot**. The app
+maps these through the current orientation to the native digitizer.
+
+| op | Fields | Meaning |
+| --- | --- | --- |
+| `tap` | x, y, optional duration | Hold at a point then release; default 0.06 seconds, range 0.03–2 |
+| `swipe` | x, y, toX, toY, optional duration | Linear drag, default 0.35 seconds, same range |
+| `type` | text | Explicit paste into focused field; replaces the iPhone clipboard; max 65536 UTF-8 bytes, no NUL |
+| `key` | key | enter, backspace, tab, escape, left, right, up, down, space |
+| `home` | — | Home button |
+| `app_switcher` | — | App Switcher |
+| `spotlight` | — | Spotlight gesture; use from Home |
+| `control_center` | — | Control Center gesture |
+| `rotate` | direction: left or right | Request rotation; phone/app rotation restrictions still apply |
+| `release` | — | Cancel the current gesture and request release of held input |
+
+Pass optional `sessionID` and `observationID` from the screenshot to reject
+actions after reconnect or orientation/geometry changes. These guards do not
+prove the same UI is still visible. Inspect after each action that can change
+the screen. Screenshot encoding also rejects a session/orientation change.
+
+Only one gesture runs at a time; overlap returns 409. Manual pointer and key
+input is paused during that gesture. **Automation → Stop Agent Action** or
+Command–Escape cancels it; disconnect, sleep, rotation and loss of control
+also invalidate it. Cleanup only targets the captured session, never a newly
+connected one. An overflowing native input queue cancels its session and releases
+input during teardown. Already-queued one-shot commands cannot be undone.
+
+`accepted` means input was queued, **not that the UI reached the desired state**.
+The API does not silently retry commands after failures. Poll readiness and
+observe again before choosing what to do next.
+
+## Current boundaries
+
+- Coordinate/HID control, not an iOS accessibility tree or XCTest assertions.
+- No direct bundle-ID launch, install, arbitrary shell, unlock or credential API.
+  Launch an app visibly via Home/Spotlight, or launch your development build
+  using your existing Xcode/Flutter tooling.
+- No automatic clipboard sync, remote network listener, workflow runner or LLM
+  backend. Codex/the client supplies the agent loop and its own permissions.
+- Avoid opening the iPhone Camera app while mirroring: the mirroring service
+  conflicts with camera use, and the phone's preview can stay black afterwards.
+
+## Device checks
+
+1. Open Settings, enable access, request status and a screenshot. Confirm
+   screenshot dimensions/orientation and that bezel/chrome are absent.
+2. Tap a harmless navigation item, swipe a list, and verify each new screenshot.
+3. Focus Settings search, type a disposable query, press Backspace/Enter, then
+   clear it. Text paste may invoke an iOS paste permission prompt.
+4. In an app that supports rotation, rotate both directions, observe again and
+   test an off-center tap. Send an old observationID and expect 409.
+5. Start a long swipe and press Stop Agent Action; ensure no held contact remains.
+   Repeat with disconnect/reconnect; an old sessionID must be rejected.
+6. Disable access; the listener and discovery file must disappear. Relaunching
+   the app must leave access disabled.

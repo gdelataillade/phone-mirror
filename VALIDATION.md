@@ -779,3 +779,63 @@ so small/simple images (icons, screenshots) still paste losslessly.
 Confirmed fixed: the user re-tested with the exact file that had been
 failing throughout (`icon.png`, the 1,379,688-byte PNG) and it now pastes
 successfully.
+
+## Local API and MCP bridge, 23 September
+
+Added opt-in **Automation → Enable Agent Access**, an authenticated IPv4
+loopback HTTP API, and a Python standard-library stdio MCP bridge with 12 tools.
+The API observes the existing decoder mailbox and sends input through the same
+native session as the window. It does not open another USB stream. Screenshots
+are oriented/cropped consistently with the mirror and scaled to a 1280-pixel
+long edge. Session and observation IDs protect against reconnect/geometry
+changes; they do not assert that a requested UI transition succeeded.
+
+Controls include taps/holds, bounded swipes, explicit text paste, named keys,
+Home, App Switcher, Spotlight, Control Center, rotation and input release.
+Concurrent gestures are rejected; cancellation, session/geometry changes and
+input epoch changes stop further gesture steps. The native queue's existing
+overflow handling cancels its session so input cleanup can run.
+
+Validation performed on this checkout:
+
+- Release build and ad-hoc deep/strict signature verification passed.
+- `scripts/test.sh`: **99 tests passed** (41 Rust, 58 Swift), including 14 new
+  automation tests for request framing/authentication, UTF-8/size boundaries,
+  argument validation, landscape coordinate mapping, task cancellation and
+  queue-failure cleanup.
+- `python3 -B -m unittest discover -s scripts/tests -p 'test_mcp.py' -v`:
+  **13 passed**, including a real stdio subprocess and a localhost HTTP fixture.
+- Real running app: status 200, missing token 401, Origin/wrong Host 403,
+  invalid coordinates 400, screenshot and action without a phone 409. The
+  connection file had mode 0600. Stop Access removed the file; re-enabling
+  rotated credentials and rejected the previous token with 401. A graceful
+  quit/relaunch left access disabled and the discovery file absent.
+- Real bridge process → running app: initialization, 12-tool discovery,
+  status, and no-device screenshot tool error all verified. No token was
+  exposed in tool results or logs.
+- Swift formatting and `git diff --check` passed. Existing macOS 27 audio
+  and movie-API deprecation warnings remain.
+- Gitleaks scan of changed/new source and documentation found no leaks.
+
+Physical iPhone 17 / iOS 27.0 over USB, later the same day:
+
+- Status reported control readiness; a real screenshot was 589 × 1280, scaled
+  from the 1206 × 2624 stream.
+- MCP tap opened Settings, focused search and typed `Accessibility` (after
+  iOS's one-time paste permission prompt). Backspace removed one character;
+  a swipe scrolled the list. An immediate swipe right after closing search had
+  no effect until the UI settled — clients must observe, not blindly retry.
+- Direct HTTP: during a two-second swipe an overlapping tap returned 409, a
+  screenshot still succeeded, and `release` cancelled the swipe (409) with
+  busy returning to false. An early cancel can still land as a partial tap.
+- After reconnecting, a new session UUID was reported and a tap carrying the
+  old session ID returned 409.
+- A late fix stops a stale window mouse-up/scroll-end from lifting the
+  agent's touch; the 14 automation tests passed after it. The race itself was
+  not reproduced live.
+
+Not yet verified live: landscape mapping and stale-observation rejection after
+rotation, gestures interrupted by cable removal/lock/sleep, every key and
+system action, Unicode text, and use from a freshly registered Codex MCP
+session. The checklist is in [AUTOMATION.md](docs/AUTOMATION.md); Codex
+registration instructions are in [MCP-BRIDGE.md](docs/MCP-BRIDGE.md).

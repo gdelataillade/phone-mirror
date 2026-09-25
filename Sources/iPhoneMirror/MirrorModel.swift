@@ -23,6 +23,11 @@ import SwiftUI
   @Published var screenshotBusy = false
   @Published var screenshotNotice: String?
   @Published var screenshotError: String?
+  @Published var automationEnabled = false
+  @Published var automationBusy = false
+  @Published var automationStatus = "Agent access off"
+  var automationCapturing = false
+  var automationServer: AutomationServer?
   // Defaults to muted: audio only starts once someone explicitly opts in.
   @Published var audioMuted: Bool =
     (UserDefaults.standard.object(forKey: "audioMuted") as? Bool)

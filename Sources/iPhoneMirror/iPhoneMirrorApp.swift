@@ -76,6 +76,13 @@ import SwiftUI
         Divider()
         Button("Connection Diagnostics…") { model.showingDiagnostics = true }
       }
+      CommandMenu("Automation") {
+        Toggle("Enable Agent Access", isOn: Binding(
+          get: { model.automationEnabled }, set: { model.setAutomationEnabled($0) }))
+        Text(model.automationStatus)
+        Button("Stop Agent Action") { model.stopAgentAction() }
+          .disabled(!model.automationBusy)
+      }
     }
   }
 }
@@ -85,6 +92,7 @@ import SwiftUI
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     guard let model else { return .terminateNow }
+    model.setAutomationEnabled(false)
     DispatchQueue.main.async {
       model.recording.stop {
         guard model.session != nil else {
@@ -107,6 +115,16 @@ struct MirrorWindow: View {
   @ObservedObject var updater: Updater
   var body: some View {
     VStack(spacing: 0) {
+      if model.automationEnabled {
+        HStack {
+          Label(model.automationBusy ? "Agent controlling iPhone" : "Agent access enabled", systemImage: "terminal")
+          Spacer()
+          Button("Stop Access") { model.setAutomationEnabled(false) }
+        }
+        .font(.caption)
+        .padding(8)
+        .background(Color.accentColor.opacity(0.12))
+      }
       // Plain, always-visible buttons: NSToolbar items and Menus proved unreliable
       // (clicks silently not registering) once this window is at its 360pt minimum
       // width, even after trimming what collapsed into the system overflow chevron.

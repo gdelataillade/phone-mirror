@@ -17,10 +17,10 @@ I built it for myself because other tools didn’t work for me.
 - Audio playback with mute and volume control.
 - Remote rotation, Home, App Switcher, Spotlight and Control Center.
 - Optional iPhone bezels, Always on Top and automatic reconnection.
+- Opt-in local [API and MCP tools](docs/AUTOMATION.md) for AI-agent device testing.
 
 ## Incoming features
 
-- AI-agent access for real-device testing.
 - Wi-Fi support (under investigation).
 
 ## Setup
