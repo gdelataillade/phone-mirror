@@ -834,8 +834,8 @@ Physical iPhone 17 / iOS 27.0 over USB, later the same day:
   agent's touch; the 14 automation tests passed after it. The race itself was
   not reproduced live.
 
-Not yet verified live: landscape mapping and stale-observation rejection after
-rotation, gestures interrupted by cable removal/lock/sleep, every key and
+Not yet verified live (landscape mapping and rotation were verified on 25
+September, below): gestures interrupted by cable removal/lock/sleep, every key and
 system action, Unicode text, and use from a freshly registered Codex MCP
 session. The checklist is in [AUTOMATION.md](docs/AUTOMATION.md); Codex
 registration instructions are in [MCP-BRIDGE.md](docs/MCP-BRIDGE.md).
@@ -875,3 +875,17 @@ Physical iPhone 17 / iOS 27.0 over USB:
   old sessionID returned 409; a tap and Home with the new one worked.
 - Real stdio bridge: 16 tools listed; `iphone_list_apps` (developer and all),
   a 404 terminate and an invalid button were returned as expected.
+
+Rotation, same day, in Calculator (launched by bundle ID):
+
+- Rotate right: screenshot became 1280 × 589 and the observationID orientation
+  changed 0 → 3. A tap carrying the portrait observationID returned 409.
+  Off-center taps landed on the intended keys (7 at upper left, the comma key
+  at lower middle, C at right of center).
+- Rotate left twice: portrait (0), then the other landscape (2). The
+  orientation-3 observationID returned 409; taps on 9 (upper middle) and 1
+  (lower left) entered "91".
+- A 2-second agent swipe interrupted by **iPhone → Rotate Right** returned 409
+  after 1.2 s with busy cleared; the next taps worked normally, so no touch
+  was left held. Back in portrait, taps entered digits and C cleared the
+  display.
