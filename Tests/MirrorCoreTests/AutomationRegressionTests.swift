@@ -53,6 +53,55 @@ final class AutomationRegressionTests: XCTestCase {
     }
   }
 
+  private func get(_ target: String) throws -> AutomationRequest? {
+    try AutomationRequest.parse(
+      Data("GET \(target) HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n\r\n".utf8))
+  }
+
+  func testQueryIsSeparatedFromRouteAndStrictlyParsed() throws {
+    let request = try XCTUnwrap(get("/v1/screenshot?format=png&scale=full"))
+    XCTAssertEqual(request.path, "/v1/screenshot")
+    XCTAssertEqual(request.query, ["format": "png", "scale": "full"])
+    XCTAssertEqual(try XCTUnwrap(get("/v1/status")).query, [:])
+    for target in [
+      "/v1/screenshot?", "/v1/screenshot?format", "/v1/screenshot?format=",
+      "/v1/screenshot?format=png&format=json", "/v1/screenshot?format=p%6Eg",
+      "/v1/screenshot?a=1&&b=2", "/v1/screenshot?format=png?x=1",
+    ] {
+      XCTAssertThrowsError(try get(target), target) {
+        XCTAssertEqual(($0 as? AutomationFailure)?.status, 400)
+      }
+    }
+    XCTAssertThrowsError(try XCTUnwrap(get("/v1/status?verbose=1")).requireQuery(allowing: []))
+  }
+
+  func testScreenshotOptionsDefaultToScaledJSONAndRejectUnknownValues() throws {
+    XCTAssertEqual(try ScreenshotOptions(query: [:]), ScreenshotOptions())
+    let raw = try ScreenshotOptions(query: ["format": "png", "scale": "full"])
+    XCTAssertTrue(raw.rawPNG)
+    XCTAssertEqual(raw.scale(for: CGSize(width: 1206, height: 2624)), 1)
+    XCTAssertEqual(
+      ScreenshotOptions().scale(for: CGSize(width: 1206, height: 2624)), 1280 / 2624,
+      accuracy: 1e-9)
+    XCTAssertEqual(ScreenshotOptions().scale(for: CGSize(width: 600, height: 800)), 1)
+    for query in [["format": "jpeg"], ["scale": "2"], ["quality": "high"]] {
+      XCTAssertThrowsError(try ScreenshotOptions(query: query), "\(query)")
+    }
+  }
+
+  func testBinaryResponseHeadCarriesMetadataButNeverLineBreaks() throws {
+    let head = String(
+      decoding: AutomationResponseHead.make(
+        status: 200, contentType: "image/png", length: 42,
+        extra: [("X-iPhoneMirror-FrameID", "7"), ("X-Evil", "a\r\nSet-Cookie: x")]),
+      as: UTF8.self)
+    XCTAssertTrue(head.hasPrefix("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n"))
+    XCTAssertTrue(head.contains("Content-Length: 42\r\n"))
+    XCTAssertTrue(head.contains("X-iPhoneMirror-FrameID: 7\r\n"))
+    XCTAssertFalse(head.contains("Set-Cookie"))
+    XCTAssertTrue(head.hasSuffix("\r\n\r\n"))
+  }
+
   func testPostCannotBeAcceptedAsBrowserSimpleFormContent() throws {
     let base = "Host: 127.0.0.1:1234\r\nAuthorization: Bearer test\r\nContent-Length: 0\r\n"
     for type in ["text/plain", "application/x-www-form-urlencoded", "multipart/form-data"] {

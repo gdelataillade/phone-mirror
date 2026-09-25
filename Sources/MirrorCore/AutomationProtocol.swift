@@ -15,7 +15,9 @@ public struct AutomationFailure: Error, LocalizedError {
 /// One bounded HTTP/1.1 request per connection. No chunking or pipelining.
 public struct AutomationRequest {
   public let method: String
+  /// The route without its query string.
   public let path: String
+  public let query: [String: String]
   public let headers: [String: String]
   public let body: Data
   public static let maximumBody = 128 * 1024
@@ -60,9 +62,31 @@ public struct AutomationRequest {
     let received = data.count - end.upperBound
     guard received <= length else { throw AutomationFailure(400, "Pipelining is unsupported") }
     guard received == length else { return nil }
+    let target = first[1].split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+    var query: [String: String] = [:]
+    if target.count == 2 {
+      // Plain name=value tokens only: no escaping to interpret, no repeated names.
+      func plain(_ text: Substring) -> Bool {
+        !text.isEmpty && text.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }
+      }
+      for pair in target[1].split(separator: "&", omittingEmptySubsequences: false) {
+        let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2, plain(parts[0]), plain(parts[1]),
+          query[String(parts[0])] == nil
+        else { throw AutomationFailure(400, "Invalid query string") }
+        query[String(parts[0])] = String(parts[1])
+      }
+    }
     return AutomationRequest(
-      method: first[0], path: first[1], headers: headers,
+      method: first[0], path: String(target[0]), query: query, headers: headers,
       body: Data(data[end.upperBound...]))
+  }
+
+  /// Rejects parameters an endpoint does not understand rather than ignoring them.
+  public func requireQuery(allowing names: Set<String>) throws {
+    guard Set(query.keys).isSubset(of: names) else {
+      throw AutomationFailure(400, "Unsupported query parameter")
+    }
   }
 
   public func authorize(token: String, port: UInt16) throws {
@@ -82,6 +106,55 @@ public struct AutomationRequest {
           == "application/json"
       else { throw AutomationFailure(415, "Expected application/json") }
     }
+  }
+}
+
+/// `GET /v1/screenshot?format=json|png&scale=default|full`.
+public struct ScreenshotOptions: Equatable {
+  /// Longest edge of the default screenshot; `full` keeps the stream resolution.
+  public static let defaultLongEdge: Double = 1280
+  public let rawPNG: Bool
+  public let fullResolution: Bool
+  public init(rawPNG: Bool = false, fullResolution: Bool = false) {
+    self.rawPNG = rawPNG
+    self.fullResolution = fullResolution
+  }
+  public init(query: [String: String]) throws {
+    guard Set(query.keys).isSubset(of: ["format", "scale"]) else {
+      throw AutomationFailure(400, "Unsupported query parameter")
+    }
+    switch query["format"] ?? "json" {
+    case "json": rawPNG = false
+    case "png": rawPNG = true
+    default: throw AutomationFailure(400, "format must be json or png")
+    }
+    switch query["scale"] ?? "default" {
+    case "default": fullResolution = false
+    case "full": fullResolution = true
+    default: throw AutomationFailure(400, "scale must be default or full")
+    }
+  }
+  /// Uniform downscale factor for an upright image of the given size.
+  public func scale(for size: CGSize) -> Double {
+    fullResolution ? 1 : min(1, Self.defaultLongEdge / max(size.width, size.height, 1))
+  }
+}
+
+/// Serialized response head. Header values come from our own identifiers, but are
+/// still restricted so nothing can inject a line break into the response.
+public enum AutomationResponseHead {
+  public static func make(
+    status: Int, contentType: String, length: Int, extra: [(String, String)] = []
+  ) -> Data {
+    var head =
+      "HTTP/1.1 \(status) \(status == 200 ? "OK" : "Error")\r\nContent-Type: \(contentType)\r\nContent-Length: \(length)\r\nCache-Control: no-store\r\nConnection: close\r\n"
+    // Scalars, not Characters: Swift treats "\r\n" as one Character equal to neither.
+    for (name, value) in extra
+    where value.unicodeScalars.allSatisfy({ $0.isASCII && $0.value >= 0x20 && $0.value != 0x7F })
+    {
+      head += "\(name): \(value)\r\n"
+    }
+    return Data((head + "\r\n").utf8)
   }
 }
 

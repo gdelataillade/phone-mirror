@@ -132,6 +132,8 @@ Explicitly save the current screen when useful for QA (the path must not exist):
 python3 scripts/iphonemirror_mcp.py --screenshot /tmp/iphone-test.png
 ```
 
+Add `--full` to keep the stream resolution instead of a 1280-pixel long edge.
+
 Run the automated bridge checks without contacting a phone:
 
 ```sh

@@ -59,7 +59,27 @@ extension MirrorModel {
     "\(id.uuidString):\(frame.orientation):\(Int(frame.size.width))x\(Int(frame.size.height))"
   }
 
-  private func automationRequest(_ request: AutomationRequest) async throws -> [String: Any] {
+  private func automationRequest(_ request: AutomationRequest) async throws -> AutomationResponse {
+    if request.method == "GET", request.path == "/v1/screenshot" {
+      let options = try ScreenshotOptions(query: request.query)
+      let shot = try await agentScreenshot(options)
+      guard options.rawPNG else {
+        var json = shot.metadata
+        json["image"] = shot.png.base64EncodedString()
+        json["mimeType"] = "image/png"
+        return .json(json)
+      }
+      let headers = shot.metadata.compactMap { key, value -> (String, String)? in
+        guard key != "coordinates" else { return nil }
+        return ("X-iPhoneMirror-\(key.prefix(1).uppercased() + key.dropFirst())", "\(value)")
+      }.sorted { $0.0 < $1.0 }
+      return .binary(shot.png, contentType: "image/png", headers: headers)
+    }
+    try request.requireQuery(allowing: [])
+    return .json(try await automationJSON(request))
+  }
+
+  private func automationJSON(_ request: AutomationRequest) async throws -> [String: Any] {
     if request.method == "GET", request.path == "/v1/status" {
       return [
         "apiVersion": 1, "connected": connected, "canControl": canControl,
@@ -74,9 +94,6 @@ extension MirrorModel {
           "app_switcher", "spotlight", "control_center", "rotate", "release",
         ],
       ]
-    }
-    if request.method == "GET", request.path == "/v1/screenshot" {
-      return try await agentScreenshot()
     }
     guard request.method == "POST", request.path == "/v1/actions" else {
       throw AutomationFailure(404, "Unknown endpoint")
@@ -145,7 +162,9 @@ extension MirrorModel {
     ]
   }
 
-  private func agentScreenshot() async throws -> [String: Any] {
+  private func agentScreenshot(_ options: ScreenshotOptions) async throws
+    -> (png: Data, metadata: [String: Any])
+  {
     guard !automationCapturing else {
       throw AutomationFailure(429, "A screenshot is already being encoded")
     }
@@ -160,7 +179,7 @@ extension MirrorModel {
         var image = FrameImage.oriented(
           pixelBuffer: frame.pixelBuffer,
           quarterTurns: quarterTurns)
-        let scale = min(1, 1280 / max(image.extent.width, image.extent.height))
+        let scale = options.scale(for: image.extent.size)
         image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         let context = CIContext(options: [.cacheIntermediates: false])
         // Integral bounds make reported pixel dimensions exactly match the returned PNG.
@@ -180,13 +199,12 @@ extension MirrorModel {
     guard let (data, width, height) = result else {
       throw AutomationFailure(500, "Could not encode the frame")
     }
-    return [
-      "image": data.base64EncodedString(), "mimeType": "image/png", "width": width,
-      "height": height,
+    return (data, [
+      "width": width, "height": height,
       "sessionID": id.uuidString, "frameID": String(frame.ordinal),
       "observationID": observationID(id, frame),
       "ageSeconds": ProcessInfo.processInfo.systemUptime - frame.receivedAt,
       "coordinates": "Normalized 0...1; origin at top left of this upright image",
-    ]
+    ])
   }
 }

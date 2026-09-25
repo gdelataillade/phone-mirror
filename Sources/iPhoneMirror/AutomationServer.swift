@@ -2,9 +2,15 @@ import Foundation
 import MirrorCore
 import Network
 
+enum AutomationResponse {
+  case json([String: Any])
+  /// A binary body; metadata travels in X-iPhoneMirror-* headers.
+  case binary(Data, contentType: String, headers: [(String, String)])
+}
+
 /// Loopback only, opt-in for this launch, and authenticated even for screenshots.
 @MainActor final class AutomationServer {
-  typealias Handler = (AutomationRequest) async throws -> [String: Any]
+  typealias Handler = (AutomationRequest) async throws -> AutomationResponse
   static var discoveryURL: URL {
     FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent("Library/Application Support/iPhoneMirror/automation.json")
@@ -182,13 +188,23 @@ import Network
     }
   }
   private func respond(_ status: Int, _ object: [String: Any]) {
-    guard !done,
-      let body = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
-    else { return }
-    var response = Data(
-      "HTTP/1.1 \(status) \(status == 200 ? "OK" : "Error")\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
-        .utf8)
-    response.append(body)
+    respond(status, .json(object))
+  }
+  private func respond(_ status: Int, _ result: AutomationResponse) {
+    guard !done else { return }
+    var response: Data
+    switch result {
+    case .json(let object):
+      guard let body = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+      else { return }
+      response = AutomationResponseHead.make(
+        status: status, contentType: "application/json", length: body.count)
+      response.append(body)
+    case .binary(let body, let contentType, let headers):
+      response = AutomationResponseHead.make(
+        status: status, contentType: contentType, length: body.count, extra: headers)
+      response.append(body)
+    }
     connection.send(
       content: response,
       completion: .contentProcessed { [weak self] _ in

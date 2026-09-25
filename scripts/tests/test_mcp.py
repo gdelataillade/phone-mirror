@@ -190,6 +190,9 @@ class HTTPTests(unittest.TestCase):
                     self.send_response(302)
                     self.send_header("Location", "http://192.0.2.1/private")
                     result = {"error": "Redirect refused"}
+                elif cls.mode == "screenshot":
+                    self.send_response(200)
+                    result = {"image": PNG, "mimeType": "image/png", "width": 1206, "height": 2624}
                 elif cls.mode == "error":
                     self.send_response(409)
                     result = {"error": "Session changed"}
@@ -235,6 +238,21 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.calls[1][2]["Authorization"], "Bearer replacement-token")
         self.assertEqual(json.loads(self.calls[1][3])["text"], "hello \U0001f44b")
         self.assertIn(b"\xf0\x9f\x91\x8b", self.calls[1][3])
+
+    def test_cli_full_screenshot_requests_stream_resolution_and_never_overwrites(self):
+        type(self).mode = "screenshot"
+        output = Path(self.temp.name) / "shot.png"
+        command = [sys.executable, "-B", str(SCRIPT), "--discovery", str(self.path),
+                   "--screenshot", str(output), "--full"]
+        first = subprocess.run(command, capture_output=True, text=True, timeout=20)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(self.calls[-1][1], "/v1/screenshot?scale=full")
+        self.assertEqual(output.read_bytes(), base64.b64decode(PNG))
+        self.assertNotIn("image", json.loads(first.stdout))
+        self.assertNotEqual(subprocess.run(command, capture_output=True, timeout=20).returncode, 0)
+        full_alone = subprocess.run([sys.executable, "-B", str(SCRIPT), "--full"],
+                                    capture_output=True, timeout=20)
+        self.assertNotEqual(full_alone.returncode, 0)
 
     def test_unsafe_discovery_never_opens_connection(self):
         urls = ["http://example.com:80", "http://localhost:80", "https://127.0.0.1:80",

@@ -43,7 +43,7 @@ screen and operate it while access is enabled.
 
 ## Endpoints
 
-All responses are JSON and `Cache-Control: no-store`. HTTP/1.1, one request per
+Responses are JSON (except `format=png` screenshots) with `Cache-Control: no-store`. HTTP/1.1, one request per
 connection. POST requires `Content-Type: application/json` and Content-Length;
 body limit 128 KiB. Errors have `{ "error": "..." }` and a non-200 HTTP status.
 
@@ -51,10 +51,20 @@ body limit 128 KiB. Errors have `{ "error": "..." }` and a non-200 HTTP status.
 | --- | --- |
 | `GET /v1/status` | Connection/control readiness, sessionID, observationID, dimensions, decoded FPS, busy flag and capabilities |
 | `GET /v1/screenshot` | Upright PNG as base64 `image`, mimeType, width/height, sessionID, observationID, frameID and ageSeconds |
+| `GET /v1/screenshot?format=png` | The same PNG as the raw response body; metadata in `X-iPhoneMirror-Width`, `-Height`, `-SessionID`, `-ObservationID`, `-FrameID` and `-AgeSeconds` headers |
 | `POST /v1/actions` | Validated input action; returns accepted and a sessionID when connected |
 
 Screenshots contain stream pixels only, without window chrome or bezel. They
-are scaled to at most 1280 pixels on the long edge. They are the latest decoded
+are scaled to at most 1280 pixels on the long edge; add `scale=full` to keep the
+stream resolution (for example 1206 × 2624), with either format. Unknown query
+parameters are rejected, and other endpoints accept none.
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" -o screen.png \
+  "http://127.0.0.1:8090/v1/screenshot?format=png&scale=full"
+```
+
+ They are the latest decoded
 frame, not a fresh camera capture or guaranteed post-action frame. An idle
 iPhone can reuse its last frame; use frameID/ageSeconds and visual verification.
 No screenshots or action text are saved to disk by the API.

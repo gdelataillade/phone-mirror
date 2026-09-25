@@ -319,13 +319,17 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--status", action="store_true", help="Print API status and exit")
     mode.add_argument("--screenshot", type=Path, metavar="PATH", help="Save a PNG and print frame metadata")
+    parser.add_argument("--full", action="store_true",
+                        help="With --screenshot: keep the stream resolution instead of a 1280px long edge")
     arguments = parser.parse_args()
+    if arguments.full and not arguments.screenshot:
+        parser.error("--full requires --screenshot")
     api = API(arguments.discovery)
     try:
         if arguments.status:
             print(json.dumps(api.request("GET", "/v1/status"), indent=2))
         elif arguments.screenshot:
-            result = api.request("GET", "/v1/screenshot")
+            result = api.request("GET", "/v1/screenshot?scale=full" if arguments.full else "/v1/screenshot")
             content = screenshot_content(result)
             # Explicit CLI export never overwrites an existing file.
             with arguments.screenshot.open("xb") as destination:
