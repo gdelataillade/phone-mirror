@@ -32,7 +32,8 @@ that script.
   native code does not retain a Swift callback pointer.
 - `Backend`: USB transport, media negotiation, bounded HEVC delivery, feedback,
   ordered input and session-specific shutdown. `probe` checks received access units
-  without decoding or saving images.
+  without decoding or saving images. `prepare [status|images|mount|reveal]` reports and
+  runs device preparation (Developer Mode and Apple's developer disk image).
 - `Vendor`: pinned idevice source, selected MIT reference patches and provenance.
 - `Tests` and `Backend/tests`: lifecycle, video watchdog, input state, orientation,
   geometry and packet-integrity tests.

@@ -36,6 +36,7 @@ final class ConnectionDiagnosticsTests: XCTestCase {
     var health = SessionHealth()
     health.native.stage = 2
     XCTAssertTrue(health.guidance.contains("Developer Mode"))
+    XCTAssertTrue(health.guidance.contains("Setup Check"))
     health.decoderErrors = 1
     XCTAssertTrue(health.guidance.contains("decoding failed"))
     health.native.orientationFailures = 1

@@ -76,7 +76,8 @@ public struct SessionHealth: Equatable, Sendable {
         "Video is quiet. This can be normal on an unchanged screen. Recent device responses and frame counters determine whether reconnection is needed."
     }
     if native.stage == 2 {
-      return "Unlock the iPhone, enable Developer Mode, and prepare it in Xcode’s Device Hub."
+      return
+        "Unlock the iPhone and check that Developer Mode is on. iPhone › Setup Check… shows what’s missing."
     }
     if native.stage == 1 {
       return

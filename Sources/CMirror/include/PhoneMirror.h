@@ -12,6 +12,12 @@ void pm_presence_close(PMPresence *handle);
 // Returned text is UTF-8 JSON. Caller frees it with pm_string_free.
 char *pm_devices(void);
 void pm_string_free(char *text);
+// Setup prerequisites for a USB iPhone as JSON: ddiOnMac, connected, trusted,
+// developerMode, ddiMounted, ddiVersion, detail. Blocks; never modifies the phone.
+char *pm_prepare_status(const char *udid);
+// 1 reveal the Developer Mode setting, 2 mount the developer disk image from Xcode's copy
+// on this Mac. Blocks. JSON {"ok":true[,"mounted":bool]} or {"error":"..."}.
+char *pm_prepare(const char *udid, uint32_t action);
 PMHandle *pm_start(const char *udid);
 // Numeric-only telemetry JSON; free with pm_string_free. No identity or payloads.
 char *pm_health(PMHandle *handle);

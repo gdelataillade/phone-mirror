@@ -94,6 +94,7 @@ import SwiftUI
           "d", modifiers: [.command, .shift]
         ).disabled(!model.active)
         Divider()
+        Button("Setup Check…") { model.showingSetupCheck = true }
         Button("Connection Diagnostics…") { model.showingDiagnostics = true }
       }
       CommandMenu("Automation") {
@@ -194,6 +195,7 @@ struct MirrorWindow: View {
       Text(recorder.notice ?? "")
     }
     .sheet(isPresented: $model.showingDiagnostics) { ConnectionDiagnosticsView(model: model) }
+    .sheet(isPresented: $model.showingSetupCheck) { SetupCheckView(model: model) }
     .alert(
       "iPhone rotation",
       isPresented: Binding(

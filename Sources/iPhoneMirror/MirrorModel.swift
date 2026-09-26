@@ -20,6 +20,10 @@ import SwiftUI
   @Published private(set) var rotation = RotationRequest()
   @Published var rotationNotice: String?
   @Published var showingDiagnostics = false
+  @Published var showingSetupCheck = false
+  @Published var setupStatus: SetupStatus?
+  @Published var setupBusy = false
+  @Published var setupMessage: String?
   @Published var screenshotBusy = false
   @Published var screenshotNotice: String?
   @Published var screenshotError: String?
@@ -208,6 +212,9 @@ import SwiftUI
       guard !closing else { return }
       record(.nativeFailure)
       error = message
+      if message.hasPrefix(developerServicesUnavailablePrefix) && !showingSetupCheck {
+        showingSetupCheck = true
+      }
       status = "Connection interrupted · preparing to retry"
       execute(lifecycle.interrupt(attempt, now: ProcessInfo.processInfo.systemUptime))
     case 4:

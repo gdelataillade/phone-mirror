@@ -30,9 +30,11 @@ I built it for myself because other tools didn’t work for me.
 ## Setup
 
 - Apple silicon Mac: **macOS 27**. iPhone: **iOS 27**.
-- Install [Xcode 27](https://developer.apple.com/xcode/resources/) and complete its initial setup — this is still required even with the downloadable app below, since the iPhone itself needs to be prepared for it.
-- Connect by USB, [trust your Mac](https://support.apple.com/en-us/109054), and [pair/prepare the phone in Xcode](https://developer.apple.com/documentation/xcode/running-your-app-on-simulated-or-physical-devices).
-- Enable [Developer Mode](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device).
+- Install [Xcode 27](https://developer.apple.com/xcode/resources/) and open it once so it installs Apple's developer components. You don't need to use Xcode after that.
+- Connect by USB and [trust your Mac](https://support.apple.com/en-us/109054).
+- Enable [Developer Mode](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device). If the setting is missing, **iPhone → Setup Check…** can show it.
+
+iPhoneMirror prepares the iPhone itself the first time it connects, and **Setup Check** shows anything still missing.
 
 ## Try it
 
