@@ -256,15 +256,13 @@ final class NativeSession: @unchecked Sendable {
   /// Starts an app request under the handle lock, then waits without it, so a slow
   /// device answer never blocks cancel or teardown. Returns (status, JSON object).
   func app(_ request: String) async -> (Int, [String: Any]) {
-    lock.lock()
-    let call: OpaquePointer? =
-      if !cancelled, let handle { request.withCString { pm_app_start(handle, $0) } } else { nil }
-    lock.unlock()
-    guard let call else { return (503, ["error": "The iPhone session closed."]) }
+    guard let call = startApp(request) else {
+      return (503, ["error": "The iPhone session closed."])
+    }
     return await withCheckedContinuation { continuation in
       DispatchQueue.global(qos: .userInitiated).async {
         // Slightly longer than the native 20 s bound, so the device's own timeout wins.
-        guard let text = pm_app_wait(call, 25_000) else {
+        guard let text = pm_app_wait(call.pointer, 25_000) else {
           continuation.resume(returning: (500, ["error": "App request failed"]))
           return
         }
@@ -286,6 +284,18 @@ final class NativeSession: @unchecked Sendable {
       }
     }
   }
+  // Synchronous: NSLock must not be taken directly in an async function.
+  private func startApp(_ request: String) -> AppCall? {
+    lock.lock()
+    defer { lock.unlock() }
+    guard !cancelled, let handle,
+      let pointer = request.withCString({ pm_app_start(handle, $0) })
+    else { return nil }
+    return AppCall(pointer: pointer)
+  }
+  /// An in-flight pm_app_start request. It borrows nothing from the session handle and
+  /// pm_app_wait consumes it exactly once, so handing it to another thread is safe.
+  private struct AppCall: @unchecked Sendable { let pointer: OpaquePointer }
   static func discover(completion: @escaping (DeviceList) -> Void) {
     DispatchQueue.global(qos: .userInitiated).async {
       guard let text = pm_devices() else {
