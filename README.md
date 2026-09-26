@@ -13,6 +13,10 @@ I built it for myself because other tools didn’t work for me.
   <img src="Resources/demo.gif" width="480" alt="iPhoneMirror demo: mirroring and controlling an iPhone from a Mac">
 </p>
 
+<p align="center">
+  <a href="https://buymeacoffee.com/gdelataillade"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" height="40" alt="Buy Me a Coffee"></a>
+</p>
+
 ## Features
 
 - Mouse, keyboard, scrolling and text paste.
