@@ -359,7 +359,7 @@ struct MirrorTitleBar: View {
     }
     // The session's transport, or before connecting, how the phone was found.
     let wifi =
-      model.transport == .wifi || (model.transport == nil && device?.transport == "Wi-Fi")
+      model.transport == .wifi || (model.transport == nil && device?.transport == .wifi)
     guard wifi else { return (text, style) }
     return (text + (model.usbAvailableOnWiFi ? " · Wi-Fi (⇧⌘R for USB)" : " · Wi-Fi"), style)
   }

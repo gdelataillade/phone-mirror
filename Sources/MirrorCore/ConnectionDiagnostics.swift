@@ -81,7 +81,7 @@ public struct SessionHealth: Equatable, Sendable {
     }
     if native.stage == 1 {
       return
-        "Connect with a data-capable USB cable, unlock the iPhone and accept Trust if prompted."
+        "Connect with a data-capable USB cable (or, once set up, keep the iPhone on the same Wi-Fi), unlock it and accept Trust if prompted."
     }
     return
       "If video stops again, save this report after reconnection. It retains recent session counters."
@@ -95,6 +95,7 @@ public struct ConnectionDiagnostics {
     case usbRemoved = "USB removed"
     case usbReturned = "USB returned"
     case wifiOnly = "USB removed; reachable over Wi-Fi"
+    case wifiLost = "Wi-Fi connection lost"
     case usbMonitorUnavailable = "USB monitoring unavailable; timed recovery remains active"
     case videoStalled = "Decoded video stalled"
     case startupTimeout = "No first picture before timeout"

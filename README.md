@@ -25,7 +25,7 @@ I built it for myself because other tools didn’t work for me.
 - Audio playback with mute and volume control.
 - Remote rotation, Home, App Switcher, Spotlight and Control Center.
 - Optional iPhone bezels, Always on Top and automatic reconnection.
-- Wi-Fi (experimental): keeps mirroring when you unplug the cable, on the same network. USB is faster and is used whenever it's connected.
+- Wi-Fi (experimental): keeps mirroring when you unplug the cable, on the same network. USB is faster: connections use it when it's plugged in, and plugging in during a Wi-Fi session offers to switch (**Reconnect Now**, ⇧⌘R).
 - Opt-in local [API and MCP tools](docs/AUTOMATION.md) for AI-agent device testing.
 
 ## Setup

@@ -83,6 +83,10 @@ import SwiftUI
   private let makeSession: () -> NativeSession
   private var presence: DevicePresenceMonitor?
   private var deviceWasAbsent = false
+  /// The last presence reach (1 USB, 2 absent, 4 Wi-Fi only), 0 before the first report.
+  private var lastReach: Int32 = 0
+  /// Everything discovery found; `devices` is this filtered by the Wi-Fi preference.
+  private var discovered: [PhoneDevice] = []
   var onSessionClosed: (() -> Void)?
   private var observers: [NSObjectProtocol] = []
   var selected: PhoneDevice? { devices.first { $0.id == selection } }
@@ -157,23 +161,29 @@ import SwiftUI
         guard let self, self.discoveryGeneration == current else { return }
         self.discovering = false
         guard !self.active else { return }
-        self.devices =
-          self.useWiFi ? result.devices : result.devices.filter { $0.transport == "USB" }
+        self.discovered = result.devices
         self.error = result.error
-        if !self.devices.contains(where: { $0.id == self.selection }) {
-          self.selection = self.devices.first?.id ?? ""
-        }
-        self.status =
-          !self.devices.isEmpty
-          ? "Ready to mirror"
-          : self.useWiFi ? "Connect your iPhone by USB or Wi-Fi" : "Connect your iPhone by USB"
+        self.applyDeviceFilter()
       }
     }
+  }
+  /// Shows the discovered phones allowed by the Wi-Fi preference; applied immediately when
+  /// the preference changes, without waiting for a new discovery.
+  private func applyDeviceFilter() {
+    devices = useWiFi ? discovered : discovered.filter { $0.transport == .usb }
+    if !devices.contains(where: { $0.id == selection }) {
+      selection = devices.first?.id ?? ""
+    }
+    status =
+      !devices.isEmpty
+      ? "Ready to mirror"
+      : useWiFi ? "Connect your iPhone by USB or Wi-Fi" : "Connect your iPhone by USB"
   }
   func connect() {
     guard !active, !selection.isEmpty else { return }
     presence = DevicePresenceMonitor(device: selection, allowWiFi: useWiFi)
     deviceWasAbsent = false
+    lastReach = 0
     execute(lifecycle.connect(device: selection))
   }
   func reconnectNow() {
@@ -229,7 +239,8 @@ import SwiftUI
       if connecting { status = message }
     case 8:
       transport = PhoneTransport(rawValue: message)
-      usbAvailableOnWiFi = false
+      // The cable may have been plugged in while this Wi-Fi attempt was starting.
+      usbAvailableOnWiFi = transport == .wifi && lastReach == 1
     case 3:
       guard !closing else { return }
       record(.nativeFailure)
@@ -269,10 +280,11 @@ import SwiftUI
   /// Applies the Wi-Fi preference to the running monitor and session.
   private func wifiPreferenceChanged() {
     guard active, let device = lifecycle.desiredDevice else {
-      refresh()
+      applyDeviceFilter()
       return
     }
     presence = DevicePresenceMonitor(device: device, allowWiFi: useWiFi)
+    lastReach = 0
     // Turned off while mirroring over Wi-Fi: reconnect, which now needs the cable.
     if !useWiFi && transport == .wifi { execute(lifecycle.retryNow()) }
   }
@@ -280,6 +292,7 @@ import SwiftUI
     if active { record(.stopped) }
     presence = nil
     deviceWasAbsent = false
+    lastReach = 0
     transport = nil
     usbAvailableOnWiFi = false
     execute(lifecycle.disconnect())
@@ -388,9 +401,11 @@ import SwiftUI
     for _ in 0..<64 {
       let event = presence?.poll() ?? 0
       if event == 0 { break }
+      let previousReach = lastReach
+      if event == 1 || event == 2 || event == 4 { lastReach = event }
       if event == 2 {
         // Unreachable by any allowed transport.
-        if !deviceWasAbsent { record(.usbRemoved) }
+        if !deviceWasAbsent { record(previousReach == 4 ? .wifiLost : .usbRemoved) }
         deviceWasAbsent = true
         usbAvailableOnWiFi = false
         if let id = sessionID, connecting || connected {
@@ -473,7 +488,8 @@ import SwiftUI
       ? "Rotating iPhone…"
       : InputGeometry(view: frame.size, screen: frame.size, rawOrientation: frame.orientation)
         == nil
-        ? "Adjusting to rotation · touch paused" : "Live over \(transport?.label ?? "USB")"
+        ? "Adjusting to rotation · touch paused"
+        : transport.map { "Live over \($0.label)" } ?? "Live"
     dimensions = "\(Int(displaySize.width)) × \(Int(displaySize.height))"
     fps = Int((Double(frame.ordinal - previousOrdinal) / max(0.1, now - previousTime)).rounded())
     previousOrdinal = frame.ordinal

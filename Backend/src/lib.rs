@@ -58,45 +58,42 @@ async fn bounded<T, E: std::fmt::Display>(
 pub async fn devices() -> Result<serde_json::Value> {
     let mut mux = bounded("Device discovery", UsbmuxdConnection::default()).await?;
     let listed = bounded("Device list", mux.get_devices()).await?;
-    let mut udids: Vec<String> = Vec::new();
+    let mut udids: Vec<&str> = Vec::new();
     for d in &listed {
-        if !udids.contains(&d.udid) {
-            udids.push(d.udid.clone());
+        if !udids.contains(&d.udid.as_str()) {
+            udids.push(&d.udid);
         }
     }
     let mut found = Vec::new();
     for udid in udids {
-        let Some(device) = preferred_connection(listed.clone(), &udid, true) else {
+        let Some(device) = preferred_connection(&listed, udid, true) else {
             continue;
         };
-        let transport = if device.connection_type == Connection::Usb {
-            "USB"
-        } else {
-            "Wi-Fi"
-        };
+        let wifi = device.connection_type != Connection::Usb;
         let provider = device.to_provider(UsbmuxdAddr::default(), "iPhoneMirror");
-        let mut name = "iPhone".to_string();
-        let mut version = String::new();
-        if let Ok(mut lockdown) =
-            bounded("Device identity", LockdownClient::connect(&provider)).await
-        {
-            if let Ok(v) =
-                bounded("Device name", lockdown.get_value(Some("DeviceName"), None)).await
-            {
-                name = v.as_string().unwrap_or("iPhone").into();
-            }
-            if let Ok(v) = bounded(
-                "Device version",
-                lockdown.get_value(Some("ProductVersion"), None),
-            )
-            .await
-            {
-                version = v.as_string().unwrap_or("").into();
-            }
-        }
-        found.push(
-            serde_json::json!({"id":device.udid,"name":name,"version":version,"transport":transport}),
-        );
+        let identity = async {
+            let mut lockdown = LockdownClient::connect(&provider).await?;
+            let name = lockdown.get_value(Some("DeviceName"), None).await?;
+            let version = lockdown.get_value(Some("ProductVersion"), None).await?;
+            Ok::<_, idevice::IdeviceError>((name, version))
+        };
+        // usbmuxd can keep listing a phone that has left the network or gone to sleep;
+        // such an entry gets a short budget and is left out, since it can't be mirrored.
+        let budget = Duration::from_secs(if wifi { 3 } else { 12 });
+        let (name, version) = match tokio::time::timeout(budget, identity).await {
+            Ok(Ok((name, version))) => (
+                name.as_string().unwrap_or("iPhone").to_owned(),
+                version.as_string().unwrap_or("").to_owned(),
+            ),
+            _ if wifi => continue,
+            _ => ("iPhone".to_owned(), String::new()),
+        };
+        found.push(serde_json::json!({
+            "id": device.udid,
+            "name": name,
+            "version": version,
+            "transport": if wifi { "wifi" } else { "usb" },
+        }));
     }
     Ok(serde_json::json!({"devices":found}))
 }
@@ -502,7 +499,7 @@ async fn run(
     let connection = async {
         let mut mux = bounded("USB connection", UsbmuxdConnection::default()).await?;
         let devices = bounded("Selected iPhone", mux.get_devices()).await?;
-        let device = preferred_connection(devices, udid, allow_wifi).ok_or(if allow_wifi {
+        let device = preferred_connection(&devices, udid, allow_wifi).ok_or(if allow_wifi {
             "Connect this iPhone by USB, or keep it on the same Wi-Fi, and unlock it."
         } else {
             "Connect this iPhone by USB and unlock it."
@@ -572,13 +569,13 @@ async fn run(
 
 /// The phone's USB connection when it has one, otherwise its Wi-Fi one (usbmuxd lists a
 /// phone on the network when Wi-Fi connections are on).
-fn preferred_connection(
-    devices: Vec<idevice::usbmuxd::UsbmuxdDevice>,
+fn preferred_connection<'a>(
+    devices: &'a [idevice::usbmuxd::UsbmuxdDevice],
     udid: &str,
     allow_wifi: bool,
-) -> Option<idevice::usbmuxd::UsbmuxdDevice> {
-    let mut candidates: Vec<_> = devices
-        .into_iter()
+) -> Option<&'a idevice::usbmuxd::UsbmuxdDevice> {
+    devices
+        .iter()
         .filter(|d| {
             d.udid == udid
                 && match d.connection_type {
@@ -587,9 +584,7 @@ fn preferred_connection(
                     Connection::Unknown(_) => false,
                 }
         })
-        .collect();
-    candidates.sort_by_key(|d| d.connection_type != Connection::Usb);
-    candidates.into_iter().next()
+        .min_by_key(|d| d.connection_type != Connection::Usb)
 }
 
 fn find_data<'a>(v: &'a plist::Value, key: &str, depth: usize) -> Option<&'a [u8]> {
@@ -1259,25 +1254,31 @@ mod transport_tests {
     #[test]
     fn usb_is_preferred_and_wifi_is_the_fallback() {
         let wifi = Connection::Network("192.0.2.1".parse().unwrap());
-        let both = vec![
+        let both = [
             device("other", 1, Connection::Usb),
             device("phone", 2, wifi.clone()),
             device("phone", 3, Connection::Usb),
         ];
         assert_eq!(
-            preferred_connection(both, "phone", true).unwrap().device_id,
+            preferred_connection(&both, "phone", true)
+                .unwrap()
+                .device_id,
             3
         );
-        let wifi_only = vec![
+        let wifi_only = [
             device("phone", 2, wifi),
             device("other", 1, Connection::Usb),
         ];
-        let chosen = preferred_connection(wifi_only.clone(), "phone", true);
-        assert_eq!(chosen.unwrap().device_id, 2);
+        assert_eq!(
+            preferred_connection(&wifi_only, "phone", true)
+                .unwrap()
+                .device_id,
+            2
+        );
         // With Wi-Fi turned off in the app, only the cable counts.
-        assert!(preferred_connection(wifi_only, "phone", false).is_none());
-        let unknown = vec![device("phone", 4, Connection::Unknown("?".into()))];
-        assert!(preferred_connection(unknown, "phone", true).is_none());
+        assert!(preferred_connection(&wifi_only, "phone", false).is_none());
+        let unknown = [device("phone", 4, Connection::Unknown("?".into()))];
+        assert!(preferred_connection(&unknown, "phone", true).is_none());
     }
 }
 

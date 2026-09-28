@@ -1,5 +1,5 @@
 //! Video stream probe: `probe [SECONDS] [UDID]`. Streams without decoding or saving
-//! images and reports frame timing and the native counters. Uses the first USB iPhone
+//! images and reports frame timing and the native counters. Uses the first iPhone found
 //! unless a UDID is given; the backend then prefers USB and falls back to Wi-Fi.
 use phone_mirror_backend::*;
 use std::{
@@ -22,7 +22,10 @@ fn main() {
                     eprintln!("{text}");
                     std::process::exit(1)
                 };
-                println!("USB device: {} · iOS {}", device["name"], device["version"]);
+                println!(
+                    "Device: {} · iOS {} over {}",
+                    device["name"], device["version"], device["transport"]
+                );
                 device["id"].as_str().unwrap().to_owned()
             }
         };

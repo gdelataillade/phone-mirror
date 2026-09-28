@@ -6,7 +6,8 @@ struct PhoneDevice: Codable, Identifiable, Hashable {
   let id: String
   let name: String
   let version: String
-  let transport: String
+  /// How the phone was found: USB when plugged in, otherwise Wi-Fi.
+  let transport: PhoneTransport
 }
 struct DeviceList: Codable {
   let devices: [PhoneDevice]
@@ -19,7 +20,7 @@ enum PrepareAction: UInt32 {
   case enableWiFiConnections = 3
 }
 /// How a session reaches the phone; reported by native event kind 8.
-enum PhoneTransport: String {
+enum PhoneTransport: String, Codable {
   case usb, wifi
   var label: String { self == .usb ? "USB" : "Wi-Fi" }
 }
