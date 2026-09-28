@@ -5,6 +5,13 @@ import SwiftUI
 extension MirrorModel {
   func checkSetup() {
     guard !setupBusy else { return }
+    // Mirroring proves every step, and the check would open a second tunnel beside it.
+    if canControl {
+      setupStatus = SetupStatus(
+        ddiOnMac: true, connected: true, trusted: true, developerMode: true, ddiMounted: true,
+        developerServices: true)
+      return
+    }
     setupBusy = true
     NativeSession.setupStatus(device: selection) { [weak self] status in
       Task { @MainActor in
@@ -44,7 +51,7 @@ struct SetupCheckView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 18) {
       Text("Setup Check").font(.title2.weight(.semibold))
-      Text("Everything below is needed once per Mac and iPhone. iPhoneMirror prepares what it can.")
+      Text("iPhoneMirror needs everything below. It prepares what it can by itself.")
         .foregroundStyle(.secondary)
       VStack(alignment: .leading, spacing: 14) {
         row(
@@ -72,7 +79,7 @@ struct SetupCheckView: View {
           .services, "Developer services",
           done: model.setupStatus?.ddiVersion.map { "Ready (\($0))." } ?? "Ready.",
           needed:
-            "iPhoneMirror prepares these when you connect. It needs internet access: Apple signs them for your iPhone."
+            "iPhoneMirror prepares these when you connect, including after the iPhone restarts. It needs internet access: Apple signs them for your iPhone."
         ) {
           Button("Prepare iPhone") { model.prepareIPhone(.mountDeveloperImage) }
         }

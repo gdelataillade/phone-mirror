@@ -12,12 +12,16 @@ public struct SetupStatus: Decodable, Equatable {
   public let developerMode: Bool?
   public let ddiMounted: Bool?
   public let ddiVersion: String?
+  /// Whether the phone advertises the services the image provides. An image can be
+  /// mounted while they fail to start, so this, not ddiMounted, decides readiness.
+  public let developerServices: Bool?
   /// The first problem found, in words the user can act on.
   public let detail: String?
 
   public init(
     ddiOnMac: Bool, connected: Bool, trusted: Bool? = nil, developerMode: Bool? = nil,
-    ddiMounted: Bool? = nil, ddiVersion: String? = nil, detail: String? = nil
+    ddiMounted: Bool? = nil, ddiVersion: String? = nil, developerServices: Bool? = nil,
+    detail: String? = nil
   ) {
     self.ddiOnMac = ddiOnMac
     self.connected = connected
@@ -25,6 +29,7 @@ public struct SetupStatus: Decodable, Equatable {
     self.developerMode = developerMode
     self.ddiMounted = ddiMounted
     self.ddiVersion = ddiVersion
+    self.developerServices = developerServices
     self.detail = detail
   }
 
@@ -32,10 +37,12 @@ public struct SetupStatus: Decodable, Equatable {
     switch step {
     // A phone Xcode already prepared keeps its developer image across restarts, so the
     // Mac's copy is only needed to prepare a phone that has none.
-    case .components: return ddiOnMac || ddiMounted == true ? .done : .needed
+    case .components:
+      return ddiOnMac || ddiMounted == true || developerServices == true ? .done : .needed
     case .trust: return connected ? Self.state(trusted) : .unknown
     case .developerMode: return Self.state(developerMode)
-    case .services: return Self.state(ddiMounted)
+    // Not mounted means not running, even when the service list couldn't be read.
+    case .services: return Self.state(developerServices ?? (ddiMounted == false ? false : nil))
     }
   }
 

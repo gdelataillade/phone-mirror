@@ -931,7 +931,8 @@ Xcode 27 installed:
   `CopyDevices` (the mounted list) instead.
 
 New `Backend/src/prepare.rs` (`prepare` diagnostic binary, `pm_prepare_status`,
-`pm_prepare`): reports trust, Developer Mode and the mounted image in ~0.13 s
+`pm_prepare`): reports trust, Developer Mode, the mounted image and whether its
+services are advertised (the mount alone isn't enough, see below) in ~0.13 s
 (`{"connected":true,"ddiMounted":true,"ddiOnMac":true,"ddiVersion":"27A266a",
 "developerMode":true,"trusted":true}` on the prepared phone); reveals the
 Developer Mode setting; and mounts Xcode's copy of the image with a personalization

@@ -246,6 +246,11 @@ struct MirrorWindow: View {
           if model.devices.isEmpty { model.refresh() } else { model.connect() }
         }.buttonStyle(.borderedProminent).controlSize(.large).padding(.top, 24)
       }
+      if model.error != nil {
+        Button("Setup Check…") { model.showingSetupCheck = true }
+          .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.secondary)
+          .padding(.top, 16)
+      }
       Spacer()
       shortcutTips.padding(.bottom, 24)
     }.frame(maxWidth: .infinity, maxHeight: .infinity)

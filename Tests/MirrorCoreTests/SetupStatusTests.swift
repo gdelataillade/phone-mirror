@@ -11,7 +11,7 @@ final class SetupStatusTests: XCTestCase {
   func testPreparedPhoneIsReady() throws {
     // Exact output of pm_prepare_status for an iPhone 17 Xcode 27 had prepared.
     let status = try decode(
-      #"{"connected":true,"ddiMounted":true,"ddiOnMac":true,"ddiVersion":"27A266a","developerMode":true,"trusted":true}"#
+      #"{"connected":true,"ddiMounted":true,"ddiOnMac":true,"ddiVersion":"27A266a","developerMode":true,"developerServices":true,"trusted":true}"#
     )
     XCTAssertTrue(status.isReady)
     XCTAssertEqual(status.ddiVersion, "27A266a")
@@ -38,9 +38,26 @@ final class SetupStatusTests: XCTestCase {
     XCTAssertEqual(developerModeOff.state(of: .services), .unknown)
   }
 
+  func testMountedImageWithoutRunningServicesIsNotReady() throws {
+    // The state a crash-looping cryptexd left behind: mounted, nothing advertised.
+    let stuck = try decode(
+      #"{"connected":true,"ddiMounted":true,"ddiOnMac":true,"ddiVersion":"27A266a","developerMode":true,"developerServices":false,"trusted":true,"detail":"The iPhone's developer services did not start."}"#
+    )
+    XCTAssertEqual(stuck.state(of: .services), .needed)
+    XCTAssertFalse(stuck.isReady)
+    // Service list unreadable: known missing if unmounted, otherwise unknown.
+    let unmounted = SetupStatus(
+      ddiOnMac: true, connected: true, trusted: true, developerMode: true, ddiMounted: false)
+    XCTAssertEqual(unmounted.state(of: .services), .needed)
+    let unreadable = SetupStatus(
+      ddiOnMac: true, connected: true, trusted: true, developerMode: true, ddiMounted: true)
+    XCTAssertEqual(unreadable.state(of: .services), .unknown)
+  }
+
   func testMacComponentsAreOnlyNeededForAnUnpreparedPhone() {
     let prepared = SetupStatus(
-      ddiOnMac: false, connected: true, trusted: true, developerMode: true, ddiMounted: true)
+      ddiOnMac: false, connected: true, trusted: true, developerMode: true, ddiMounted: true,
+      developerServices: true)
     XCTAssertEqual(prepared.state(of: .components), .done)
     XCTAssertTrue(prepared.isReady)
     let unprepared = SetupStatus(

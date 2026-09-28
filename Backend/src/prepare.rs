@@ -38,6 +38,9 @@ const MOUNT_PATH: &str = "/System/Developer";
 const MOUNT_TIMEOUT: Duration = Duration::from_secs(90);
 const NO_IMAGE: &str =
     "Apple's developer components aren't on this Mac. Install Xcode and open it once.";
+/// A mounted image whose services never start; seen when the phone's cryptexd kept
+/// crashing, which only turning Developer Mode off and on fixed.
+const SERVICES_NOT_STARTED: &str = "The iPhone's developer services did not start. Restart the iPhone; if that doesn't help, turn Developer Mode off and on again.";
 
 #[derive(Debug, PartialEq)]
 pub struct DdiFiles {
@@ -211,12 +214,13 @@ async fn unique_chip_id(provider: &UsbmuxdProvider) -> Result<u64> {
 }
 
 /// Each prerequisite as true, false or null (not checked because an earlier one failed),
-/// plus the first problem found. Never modifies the phone.
+/// plus the first problem found. Never modifies the phone. Opens its own tunnel, so the
+/// app doesn't call it while mirroring.
 pub async fn status(udid: &str) -> Value {
     let mut out = json!({
         "ddiOnMac": ddi_files(Path::new(DDI_RESTORE_DIR)).is_ok(),
         "connected": false, "trusted": null, "developerMode": null, "ddiMounted": null,
-        "ddiVersion": null,
+        "ddiVersion": null, "developerServices": null,
     });
     let provider = match provider(udid).await {
         Ok(p) => p,
@@ -255,6 +259,20 @@ pub async fn status(udid: &str) -> Value {
             let version = mounted_developer_image(&entries);
             out["ddiMounted"] = version.is_some().into();
             out["ddiVersion"] = version.into();
+        }
+        Err(e) => {
+            out["detail"] = e.into();
+            return out;
+        }
+    }
+    // What mirroring needs is the services the image provides, not just the mount.
+    match Tunnel::open(&provider).await {
+        Ok(tunnel) => {
+            let running = tunnel.has_developer_services();
+            out["developerServices"] = running.into();
+            if !running && out["ddiMounted"] == true {
+                out["detail"] = SERVICES_NOT_STARTED.into();
+            }
         }
         Err(e) => out["detail"] = e.into(),
     }
@@ -306,7 +324,7 @@ pub async fn prepare_developer_services(
     if tunnel.has_developer_services() {
         Ok(())
     } else {
-        Err("The iPhone's developer services did not start. Restart the iPhone; if that doesn't help, turn Developer Mode off and on again.".into())
+        Err(SERVICES_NOT_STARTED.into())
     }
 }
 

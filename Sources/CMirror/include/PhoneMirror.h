@@ -13,7 +13,8 @@ void pm_presence_close(PMPresence *handle);
 char *pm_devices(void);
 void pm_string_free(char *text);
 // Setup prerequisites for a USB iPhone as JSON: ddiOnMac, connected, trusted,
-// developerMode, ddiMounted, ddiVersion, detail. Blocks; never modifies the phone.
+// developerMode, ddiMounted, ddiVersion, developerServices, detail. Blocks; never modifies
+// the phone. Opens its own tunnel: don't call it during a mirroring session.
 char *pm_prepare_status(const char *udid);
 // 1 reveal the Developer Mode setting, 2 mount the developer disk image from Xcode's copy
 // on this Mac. Blocks. JSON {"ok":true[,"mounted":bool]} or {"error":"..."}.
