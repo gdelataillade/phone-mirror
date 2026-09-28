@@ -784,7 +784,7 @@ async fn stream(
                     || metrics.queue_overflows>0 || metrics.discontinuities>0;
                 if received && stalled && last_frame.elapsed()>Duration::from_secs(8) {break Err("The video pipeline stopped producing complete pictures. Reconnecting.".into());}
                 if stalled && last_frame.elapsed()>Duration::from_secs(2) {request_refresh=true;}
-                if !received && started.elapsed()>Duration::from_secs(20) {break Err("No complete video frame arrived. Unlock the phone, prepare it in Xcode, then reconnect.".into());}
+                if !received && started.elapsed()>Duration::from_secs(20) {break Err("No complete video frame arrived. Unlock the iPhone and reconnect; iPhone › Setup Check… shows anything missing.".into());}
                 if first_seq.is_some() {
                     if let Err(error)=send_feedback(video.send_to(remote_video_port,build_rctl(our_ssrc,started.elapsed().as_millis() as u16,frames,relative_seq)), &mut metrics).await {break Err(error);}
                 }
