@@ -90,6 +90,7 @@ import SwiftUI
           "r", modifiers: [.command, .shift]
         ).disabled(!model.canReconnect)
         Button("Refresh Devices") { model.refresh() }.keyboardShortcut("r").disabled(model.active)
+        Toggle("Use Wi-Fi When Unplugged", isOn: $model.useWiFi)
         Button("Disconnect") { model.disconnect() }.keyboardShortcut(
           "d", modifiers: [.command, .shift]
         ).disabled(!model.active)
@@ -223,7 +224,10 @@ struct MirrorWindow: View {
       Text(
         model.error
           ?? (model.active
-            ? model.status : "Connect by USB, unlock your iPhone,\nand keep it within reach.")
+            ? model.status
+            : model.useWiFi
+              ? "Connect by USB or Wi-Fi, unlock your iPhone,\nand keep it within reach."
+              : "Connect by USB, unlock your iPhone,\nand keep it within reach.")
       )
       .font(.system(size: 13)).foregroundStyle(.secondary).multilineTextAlignment(.center)
       .lineSpacing(4).fixedSize(horizontal: false, vertical: true).padding(.top, 13).padding(
@@ -348,7 +352,13 @@ struct MirrorTitleBar: View {
       )
     }
     guard let device = model.selected else { return ("Waiting for iPhone…", .secondary) }
-    return ("iOS \(device.version)", .secondary)
+    var text = "iOS \(device.version)"
+    // The session's transport, or before connecting, how the phone was found.
+    if model.transport == .wifi || (model.transport == nil && device.transport == "Wi-Fi") {
+      text += " · Wi-Fi"
+    }
+    if model.usbAvailableOnWiFi { text += " · USB connected, ⇧⌘R to switch" }
+    return (text, .secondary)
   }
 }
 

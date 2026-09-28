@@ -29,6 +29,12 @@ pub use presence::*;
 
 type Result<T> = std::result::Result<T, String>;
 type Display = DisplayServiceClient<Box<dyn ReadWrite>>;
+/// Transport bits for `pm_start` and `pm_presence_start`. USB is always allowed.
+pub const TRANSPORT_USB: u32 = 1;
+pub const TRANSPORT_WIFI: u32 = 2;
+/// Wi-Fi round trips vary (up to ~130 ms measured); timeouts that restart the session
+/// get this much more headroom there.
+const WIFI_TIMEOUT_FACTOR: u32 = 3;
 
 fn runtime() -> Result<tokio::runtime::Runtime> {
     tokio::runtime::Builder::new_multi_thread()
@@ -47,14 +53,27 @@ async fn bounded<T, E: std::fmt::Display>(
         .map_err(|e| format!("{label}: {e}"))
 }
 
+/// One entry per iPhone, over USB when it has a cable connection, otherwise over Wi-Fi
+/// (usbmuxd lists a phone on the network when its Wi-Fi connections are on).
 pub async fn devices() -> Result<serde_json::Value> {
-    let mut mux = bounded("USB discovery", UsbmuxdConnection::default()).await?;
+    let mut mux = bounded("Device discovery", UsbmuxdConnection::default()).await?;
+    let listed = bounded("Device list", mux.get_devices()).await?;
+    let mut udids: Vec<String> = Vec::new();
+    for d in &listed {
+        if !udids.contains(&d.udid) {
+            udids.push(d.udid.clone());
+        }
+    }
     let mut found = Vec::new();
-    for device in bounded("Device list", mux.get_devices())
-        .await?
-        .into_iter()
-        .filter(|d| d.connection_type == Connection::Usb)
-    {
+    for udid in udids {
+        let Some(device) = preferred_connection(listed.clone(), &udid, true) else {
+            continue;
+        };
+        let transport = if device.connection_type == Connection::Usb {
+            "USB"
+        } else {
+            "Wi-Fi"
+        };
         let provider = device.to_provider(UsbmuxdAddr::default(), "iPhoneMirror");
         let mut name = "iPhone".to_string();
         let mut version = String::new();
@@ -76,7 +95,7 @@ pub async fn devices() -> Result<serde_json::Value> {
             }
         }
         found.push(
-            serde_json::json!({"id":device.udid,"name":name,"version":version,"transport":"USB"}),
+            serde_json::json!({"id":device.udid,"name":name,"version":version,"transport":transport}),
         );
     }
     Ok(serde_json::json!({"devices":found}))
@@ -141,7 +160,8 @@ pub unsafe extern "C" fn pm_prepare_status(udid: *const c_char) -> *mut c_char {
         .unwrap_or_default()
         .into_raw()
 }
-/// 1 reveals the Developer Mode setting, 2 mounts the developer disk image. Blocks.
+/// 1 reveals the Developer Mode setting, 2 mounts the developer disk image, 3 turns on the
+/// phone's Wi-Fi connections. Blocks.
 /// Returns {"ok":true} (with "mounted" for 2) or {"error":"…"}; free with pm_string_free.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pm_prepare(udid: *const c_char, action: u32) -> *mut c_char {
@@ -156,6 +176,9 @@ pub unsafe extern "C" fn pm_prepare(udid: *const c_char, action: u32) -> *mut c_
                     2 => prepare::mount(&udid)
                         .await
                         .map(|mounted| serde_json::json!({ "ok": true, "mounted": mounted })),
+                    3 => prepare::enable_wifi_connections(&udid)
+                        .await
+                        .map(|()| serde_json::json!({ "ok": true })),
                     _ => Err("Unknown preparation step".into()),
                 }
             })
@@ -182,7 +205,7 @@ pub unsafe extern "C" fn pm_string_free(text: *mut c_char) {
     }
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pm_start(udid: *const c_char) -> *mut PMHandle {
+pub unsafe extern "C" fn pm_start(udid: *const c_char, transports: u32) -> *mut PMHandle {
     if udid.is_null() {
         return std::ptr::null_mut();
     }
@@ -204,6 +227,7 @@ pub unsafe extern "C" fn pm_start(udid: *const c_char) -> *mut PMHandle {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             runtime()?.block_on(run(
                 &udid,
+                transports,
                 &tx,
                 &audio_tx,
                 command_rx,
@@ -464,6 +488,7 @@ async fn cancelled(rx: &mut watch::Receiver<bool>) {
 }
 async fn run(
     udid: &str,
+    transports: u32,
     tx: &mpsc::SyncSender<PMEvent>,
     audio_tx: &mpsc::SyncSender<PMEvent>,
     commands: async_mpsc::Receiver<Command>,
@@ -472,19 +497,26 @@ async fn run(
     health: &health::SharedHealth,
 ) -> Result<()> {
     health::stage(health, 1);
-    status(tx, "Opening USB connection…");
+    let allow_wifi = transports & TRANSPORT_WIFI != 0;
+    status(tx, "Finding your iPhone…");
     let connection = async {
         let mut mux = bounded("USB connection", UsbmuxdConnection::default()).await?;
         let devices = bounded("Selected iPhone", mux.get_devices()).await?;
-        let device = preferred_connection(devices, udid)
-            .ok_or("Connect this iPhone by USB and unlock it.")?;
+        let device = preferred_connection(devices, udid, allow_wifi).ok_or(if allow_wifi {
+            "Connect this iPhone by USB, or keep it on the same Wi-Fi, and unlock it."
+        } else {
+            "Connect this iPhone by USB and unlock it."
+        })?;
+        let wifi = device.connection_type != Connection::Usb;
         let provider = device.to_provider(UsbmuxdAddr::default(), "iPhoneMirror");
+        // Kind 8 tells the app which transport this session uses.
+        let _ = tx.try_send(PMEvent::message(8, if wifi { "wifi" } else { "usb" }));
         status(
             tx,
-            if device.connection_type == Connection::Usb {
-                "Opening developer services…"
-            } else {
+            if wifi {
                 "Opening developer services over Wi-Fi…"
+            } else {
+                "Opening developer services…"
             },
         );
         health::stage(health, 2);
@@ -508,9 +540,9 @@ async fn run(
             DisplayServiceClient::connect_rsd(&mut adapter, &mut rsd),
         )
         .await?;
-        Ok::<_, String>((adapter, rsd, display))
+        Ok::<_, String>((adapter, rsd, display, wifi))
     };
-    let (mut adapter, mut rsd, mut display) = tokio::select! {
+    let (mut adapter, mut rsd, mut display, wifi) = tokio::select! {
         result = connection => result?, _ = cancelled(&mut cancel) => return Ok(()),
     };
     let session_id = uuid::Uuid::new_v4();
@@ -525,6 +557,7 @@ async fn run(
         app_requests,
         cancel.clone(),
         health,
+        if wifi { WIFI_TIMEOUT_FACTOR } else { 1 },
     )
     .await;
     // Cleanup even when setup was cancelled after the audio half started.
@@ -542,11 +575,17 @@ async fn run(
 fn preferred_connection(
     devices: Vec<idevice::usbmuxd::UsbmuxdDevice>,
     udid: &str,
+    allow_wifi: bool,
 ) -> Option<idevice::usbmuxd::UsbmuxdDevice> {
     let mut candidates: Vec<_> = devices
         .into_iter()
         .filter(|d| {
-            d.udid == udid && matches!(d.connection_type, Connection::Usb | Connection::Network(_))
+            d.udid == udid
+                && match d.connection_type {
+                    Connection::Usb => true,
+                    Connection::Network(_) => allow_wifi,
+                    Connection::Unknown(_) => false,
+                }
         })
         .collect();
     candidates.sort_by_key(|d| d.connection_type != Connection::Usb);
@@ -590,6 +629,7 @@ async fn stream(
     app_requests: async_mpsc::Receiver<apps::Request>,
     cancel: watch::Receiver<bool>,
     health: &health::SharedHealth,
+    timeout_factor: u32,
 ) -> Result<()> {
     // Cancellation may drop setup safely: no input task exists until this completes.
     // Keep this select outside the media loop so held inputs still get explicit cleanup.
@@ -753,6 +793,7 @@ async fn stream(
         refresh_tx,
         rotation,
         tx.clone(),
+        timeout_factor,
     ));
     let app_worker = tokio::spawn(apps::run(
         adapter.clone(),
@@ -966,6 +1007,7 @@ async fn input_loop(
     refresh: async_mpsc::Sender<()>,
     mut rotation: Option<OrientationServiceClient<Box<dyn ReadWrite>>>,
     events: mpsc::SyncSender<PMEvent>,
+    timeout_factor: u32,
 ) {
     let mut keys = BTreeSet::new();
     let mut touch = None;
@@ -984,7 +1026,7 @@ async fn input_loop(
             Duration::from_secs(5)
         } else {
             Duration::from_secs(1)
-        };
+        } * timeout_factor;
         let operation = async {
             let (kind, a, b) = match cmd {
                 Command::Input(kind, a, b) => (kind, a, b),
@@ -1102,8 +1144,11 @@ async fn input_loop(
                     } else {
                         RotationDirection::Left
                     };
-                    match tokio::time::timeout(Duration::from_millis(750), client.rotate(direction))
-                        .await
+                    match tokio::time::timeout(
+                        Duration::from_millis(750) * timeout_factor,
+                        client.rotate(direction),
+                    )
+                    .await
                     {
                         Ok(Ok(state)) => {
                             let _ = events.try_send(PMEvent::message(
@@ -1219,17 +1264,20 @@ mod transport_tests {
             device("phone", 2, wifi.clone()),
             device("phone", 3, Connection::Usb),
         ];
-        assert_eq!(preferred_connection(both, "phone").unwrap().device_id, 3);
+        assert_eq!(
+            preferred_connection(both, "phone", true).unwrap().device_id,
+            3
+        );
         let wifi_only = vec![
             device("phone", 2, wifi),
             device("other", 1, Connection::Usb),
         ];
-        assert_eq!(
-            preferred_connection(wifi_only, "phone").unwrap().device_id,
-            2
-        );
+        let chosen = preferred_connection(wifi_only.clone(), "phone", true);
+        assert_eq!(chosen.unwrap().device_id, 2);
+        // With Wi-Fi turned off in the app, only the cable counts.
+        assert!(preferred_connection(wifi_only, "phone", false).is_none());
         let unknown = vec![device("phone", 4, Connection::Unknown("?".into()))];
-        assert!(preferred_connection(unknown, "phone").is_none());
+        assert!(preferred_connection(unknown, "phone", true).is_none());
     }
 }
 

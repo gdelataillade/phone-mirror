@@ -9,7 +9,7 @@ extension MirrorModel {
     if canControl {
       setupStatus = SetupStatus(
         ddiOnMac: true, connected: true, trusted: true, developerMode: true, ddiMounted: true,
-        developerServices: true)
+        developerServices: true, wifiConnections: transport == .wifi ? true : nil)
       return
     }
     setupBusy = true
@@ -25,7 +25,11 @@ extension MirrorModel {
     guard !setupBusy else { return }
     setupBusy = true
     setupMessage =
-      action == .mountDeveloperImage ? "Preparing the iPhone…" : "Showing the setting…"
+      switch action {
+      case .mountDeveloperImage: "Preparing the iPhone…"
+      case .revealDeveloperMode: "Showing the setting…"
+      case .enableWiFiConnections: "Turning on Wi-Fi connections…"
+      }
     NativeSession.prepare(device: selection, action) { [weak self] failure in
       Task { @MainActor in
         guard let self else { return }
@@ -82,6 +86,14 @@ struct SetupCheckView: View {
             "iPhoneMirror prepares these when you connect, including after the iPhone restarts. It needs internet access: Apple signs them for your iPhone."
         ) {
           Button("Prepare iPhone") { model.prepareIPhone(.mountDeveloperImage) }
+        }
+        row(
+          .wifiConnections, "Wi-Fi connections (optional)",
+          done: "On. iPhoneMirror can connect without the cable when both are on the same Wi-Fi.",
+          needed: "Off. Turn this on to mirror without the cable on the same Wi-Fi network.",
+          unknown: "Checked when the iPhone is connected and not mirroring over USB."
+        ) {
+          Button("Turn On") { model.prepareIPhone(.enableWiFiConnections) }
         }
       }
       if let message = model.setupMessage ?? model.setupStatus?.detail {

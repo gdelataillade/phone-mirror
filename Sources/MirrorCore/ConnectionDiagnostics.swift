@@ -94,6 +94,7 @@ public struct ConnectionDiagnostics {
     case firstFrame = "First decoded picture"
     case usbRemoved = "USB removed"
     case usbReturned = "USB returned"
+    case wifiOnly = "USB removed; reachable over Wi-Fi"
     case usbMonitorUnavailable = "USB monitoring unavailable; timed recovery remains active"
     case videoStalled = "Decoded video stalled"
     case startupTimeout = "No first picture before timeout"

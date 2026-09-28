@@ -21,6 +21,19 @@ import SwiftUI
   @Published var rotationNotice: String?
   @Published var showingDiagnostics = false
   @Published var showingSetupCheck = false
+  /// Mirror over usbmuxd's Wi-Fi connection when the cable is unplugged.
+  @Published var useWiFi: Bool =
+    (UserDefaults.standard.object(forKey: "useWiFi") as? Bool) ?? true
+  {
+    didSet {
+      UserDefaults.standard.set(useWiFi, forKey: "useWiFi")
+      wifiPreferenceChanged()
+    }
+  }
+  /// How the current session reaches the phone (native event kind 8).
+  @Published private(set) var transport: PhoneTransport?
+  /// The cable is back while the session runs over Wi-Fi; Reconnect Now would switch to it.
+  @Published private(set) var usbAvailableOnWiFi = false
   @Published var setupStatus: SetupStatus?
   @Published var setupBusy = false
   @Published var setupMessage: String?
@@ -68,8 +81,8 @@ import SwiftUI
   private var watchdog = VideoWatchdog(started: ProcessInfo.processInfo.systemUptime)
   private var discoveryGeneration = UUID()
   private let makeSession: () -> NativeSession
-  private var presence: USBPresenceMonitor?
-  private var usbWasAbsent = false
+  private var presence: DevicePresenceMonitor?
+  private var deviceWasAbsent = false
   var onSessionClosed: (() -> Void)?
   private var observers: [NSObjectProtocol] = []
   var selected: PhoneDevice? { devices.first { $0.id == selection } }
@@ -144,19 +157,23 @@ import SwiftUI
         guard let self, self.discoveryGeneration == current else { return }
         self.discovering = false
         guard !self.active else { return }
-        self.devices = result.devices
+        self.devices =
+          self.useWiFi ? result.devices : result.devices.filter { $0.transport == "USB" }
         self.error = result.error
         if !self.devices.contains(where: { $0.id == self.selection }) {
           self.selection = self.devices.first?.id ?? ""
         }
-        self.status = self.devices.isEmpty ? "Connect your iPhone by USB" : "Ready to mirror"
+        self.status =
+          !self.devices.isEmpty
+          ? "Ready to mirror"
+          : self.useWiFi ? "Connect your iPhone by USB or Wi-Fi" : "Connect your iPhone by USB"
       }
     }
   }
   func connect() {
     guard !active, !selection.isEmpty else { return }
-    presence = USBPresenceMonitor(device: selection)
-    usbWasAbsent = false
+    presence = DevicePresenceMonitor(device: selection, allowWiFi: useWiFi)
+    deviceWasAbsent = false
     execute(lifecycle.connect(device: selection))
   }
   func reconnectNow() {
@@ -185,13 +202,15 @@ import SwiftUI
         previousOrdinal = 0
         previousTime = ProcessInfo.processInfo.systemUptime
         watchdog = VideoWatchdog(started: previousTime)
-        status = "Opening USB connection…"
+        transport = nil
+        usbAvailableOnWiFi = false
+        status = "Finding your iPhone…"
         native.event = { [weak self] kind, message in
           Task { @MainActor in
             self?.applyEvent(kind, message, attempt: attempt.id)
           }
         }
-        native.start(device: attempt.device)
+        native.start(device: attempt.device, allowWiFi: useWiFi)
       case .close(let id):
         recording.stop()
         guard lifecycle.attempt?.id == id else { continue }
@@ -208,6 +227,9 @@ import SwiftUI
     switch kind {
     case 1:
       if connecting { status = message }
+    case 8:
+      transport = PhoneTransport(rawValue: message)
+      usbAvailableOnWiFi = false
     case 3:
       guard !closing else { return }
       record(.nativeFailure)
@@ -220,6 +242,8 @@ import SwiftUI
     case 4:
       // NativeSession sends this only after input cleanup and pm_close complete.
       record(.closed, health: session?.healthSnapshot())
+      transport = nil
+      usbAvailableOnWiFi = false
       recording.stop()
       session = nil
       hasPicture = false
@@ -242,10 +266,22 @@ import SwiftUI
     default: break
     }
   }
+  /// Applies the Wi-Fi preference to the running monitor and session.
+  private func wifiPreferenceChanged() {
+    guard active, let device = lifecycle.desiredDevice else {
+      refresh()
+      return
+    }
+    presence = DevicePresenceMonitor(device: device, allowWiFi: useWiFi)
+    // Turned off while mirroring over Wi-Fi: reconnect, which now needs the cable.
+    if !useWiFi && transport == .wifi { execute(lifecycle.retryNow()) }
+  }
   func disconnect() {
     if active { record(.stopped) }
     presence = nil
-    usbWasAbsent = false
+    deviceWasAbsent = false
+    transport = nil
+    usbAvailableOnWiFi = false
     execute(lifecycle.disconnect())
     hasPicture = false
     error = nil
@@ -266,7 +302,8 @@ import SwiftUI
     case .waiting:
       let remaining = max(
         1, Int(ceil((lifecycle.retryAt ?? 0) - ProcessInfo.processInfo.systemUptime)))
-      status = "Retrying in \(remaining)s · connect USB and unlock iPhone"
+      status =
+        "Retrying in \(remaining)s · \(useWiFi ? "connect USB or join the same Wi-Fi" : "connect USB") and unlock iPhone"
     case .sleeping: status = "Paused while your Mac sleeps"
     case .idle: break
     default: break
@@ -352,19 +389,41 @@ import SwiftUI
       let event = presence?.poll() ?? 0
       if event == 0 { break }
       if event == 2 {
-        if !usbWasAbsent { record(.usbRemoved) }
-        usbWasAbsent = true
+        // Unreachable by any allowed transport.
+        if !deviceWasAbsent { record(.usbRemoved) }
+        deviceWasAbsent = true
+        usbAvailableOnWiFi = false
         if let id = sessionID, connecting || connected {
-          error = "USB disconnected. Reconnect the cable to resume."
-          status = "Waiting for USB"
+          error =
+            useWiFi
+            ? "iPhone disconnected. Reconnect the cable, or bring it back to the same Wi-Fi, to resume."
+            : "USB disconnected. Reconnect the cable to resume."
+          status = useWiFi ? "Waiting for your iPhone" : "Waiting for USB"
           execute(lifecycle.interrupt(id, now: now))
         }
       } else if event == 1 {
-        if usbWasAbsent { record(.usbReturned) }
-        if usbWasAbsent && (lifecycle.phase == .waiting || closing) {
+        // On USB. A Wi-Fi session keeps running; Reconnect Now switches to the cable.
+        if deviceWasAbsent { record(.usbReturned) }
+        if transport == .wifi && (connecting || connected) {
+          usbAvailableOnWiFi = true
+        } else if deviceWasAbsent && (lifecycle.phase == .waiting || closing) {
           execute(lifecycle.retryNow())
         }
-        usbWasAbsent = false
+        deviceWasAbsent = false
+      } else if event == 4 {
+        // Reachable over Wi-Fi only (reported only when Wi-Fi is allowed).
+        usbAvailableOnWiFi = false
+        if transport == .usb && (connecting || connected) {
+          // The cable was pulled: this USB session can't continue, so reopen over Wi-Fi.
+          record(.wifiOnly)
+          error = nil
+          status = "Switching to Wi-Fi…"
+          execute(lifecycle.retryNow())
+        } else if lifecycle.phase == .waiting || closing {
+          if deviceWasAbsent { record(.wifiOnly) }
+          execute(lifecycle.retryNow())
+        }
+        deviceWasAbsent = false
       } else if event == 3 {
         record(.usbMonitorUnavailable)
         presence = nil
@@ -379,7 +438,7 @@ import SwiftUI
     if let health = session?.healthSnapshot() { watchdog.observe(health: health, now: now) }
     if watchdog.expired(now: now) {
       record(connected ? .videoStalled : .startupTimeout)
-      error = "Video stopped updating. Checking the USB connection and restarting the stream."
+      error = "Video stopped updating. Checking the connection and restarting the stream."
       status = "Restoring video…"
       execute(lifecycle.interrupt(id, now: now))
       return
@@ -414,7 +473,7 @@ import SwiftUI
       ? "Rotating iPhone…"
       : InputGeometry(view: frame.size, screen: frame.size, rawOrientation: frame.orientation)
         == nil
-        ? "Adjusting to rotation · touch paused" : "Live over USB"
+        ? "Adjusting to rotation · touch paused" : "Live over \(transport?.label ?? "USB")"
     dimensions = "\(Int(displaySize.width)) × \(Int(displaySize.height))"
     fps = Int((Double(frame.ordinal - previousOrdinal) / max(0.1, now - previousTime)).rounded())
     previousOrdinal = frame.ordinal

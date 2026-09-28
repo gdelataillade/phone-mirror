@@ -27,7 +27,7 @@ fn main() {
             }
         };
         let id = CString::new(id).unwrap();
-        let handle = pm_start(id.as_ptr());
+        let handle = pm_start(id.as_ptr(), TRANSPORT_USB | TRANSPORT_WIFI);
         let start = Instant::now();
         let mut frames = 0u64;
         let mut first: Option<Duration> = None;

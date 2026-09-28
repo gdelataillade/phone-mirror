@@ -110,7 +110,7 @@ public struct AutomationRequest {
 }
 
 /// `GET /v1/screenshot?format=json|png&scale=default|full`.
-public struct ScreenshotOptions: Equatable {
+public struct ScreenshotOptions: Equatable, Sendable {
   /// Longest edge of the default screenshot; `full` keeps the stream resolution.
   public static let defaultLongEdge: Double = 1280
   public let rawPNG: Bool

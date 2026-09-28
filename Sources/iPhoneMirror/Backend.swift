@@ -16,17 +16,28 @@ struct DeviceList: Codable {
 enum PrepareAction: UInt32 {
   case revealDeveloperMode = 1
   case mountDeveloperImage = 2
+  case enableWiFiConnections = 3
 }
+/// How a session reaches the phone; reported by native event kind 8.
+enum PhoneTransport: String {
+  case usb, wifi
+  var label: String { self == .usb ? "USB" : "Wi-Fi" }
+}
+/// pm_start / pm_presence_start transport bits.
+private func transports(allowWiFi: Bool) -> UInt32 { allowWiFi ? 3 : 1 }
 // Matches pm_paste_image's `format` parameter (PhoneMirror.h) exactly.
 enum ImageFormat: UInt32 {
   case png = 0
   case jpeg = 1
 }
 
-/// Main-actor owner; polling never waits for USB or device services.
-final class USBPresenceMonitor {
+/// Main-actor owner; polling never waits for USB or device services. Reports whether the
+/// phone is on USB, reachable over Wi-Fi only (when allowed), or absent.
+final class DevicePresenceMonitor {
   private var handle: OpaquePointer?
-  init(device: String) { handle = device.withCString { pm_presence_start($0) } }
+  init(device: String, allowWiFi: Bool) {
+    handle = device.withCString { pm_presence_start($0, transports(allowWiFi: allowWiFi)) }
+  }
   func poll() -> Int32 { handle.map { pm_presence_poll($0) } ?? 0 }
   deinit { if let handle { pm_presence_close(handle) } }
 }
@@ -67,7 +78,7 @@ final class NativeSession: @unchecked Sendable {
     audioPlayback?.volume = volume
     lock.unlock()
   }
-  func start(device: String) {
+  func start(device: String, allowWiFi: Bool = false) {
     queue.async { [self] in
       lock.lock()
       if cancelled {
@@ -75,7 +86,7 @@ final class NativeSession: @unchecked Sendable {
         event?(4, "Disconnected")
         return
       }
-      handle = device.withCString { pm_start($0) }
+      handle = device.withCString { pm_start($0, transports(allowWiFi: allowWiFi)) }
       let session = handle
       lock.unlock()
       guard let session else {
