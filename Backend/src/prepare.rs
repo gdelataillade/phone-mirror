@@ -6,13 +6,22 @@
 //! there (it is never bundled or downloaded), asks Apple's signing server to personalize
 //! it for the phone exactly as Xcode does, and mounts it. It also reports each setup
 //! prerequisite and can reveal the hidden Developer Mode setting.
+//!
+//! The mount lasts until the phone restarts. Xcode 27 instead installs the image as a
+//! persistent cryptex; this module deliberately does not: an interrupted persistent
+//! install left a phone whose cryptexd crashed at every boot until Developer Mode was
+//! turned off and on (see VALIDATION.md).
 use super::{Result, bounded};
 use idevice::{
-    IdeviceError, IdeviceService,
+    IdeviceError, IdeviceService, ReadWrite, RsdService,
     amfi::AmfiClient,
+    core_device::DisplayServiceClient,
+    core_device_proxy::CoreDeviceProxy,
     lockdown::LockdownClient,
     mobile_image_mounter::ImageMounter,
     provider::{IdeviceProvider, UsbmuxdProvider},
+    rsd::RsdHandshake,
+    tcp::handle::AdapterHandle,
     usbmuxd::{Connection, UsbmuxdAddr, UsbmuxdConnection},
 };
 use serde_json::{Value, json};
@@ -88,6 +97,40 @@ pub fn ddi_files(dir: &Path) -> Result<DdiFiles> {
         );
     }
     Ok(files)
+}
+
+/// The USB tunnel to the phone's CoreDevice services and their directory.
+pub struct Tunnel {
+    pub adapter: AdapterHandle,
+    pub rsd: RsdHandshake,
+    port: u16,
+}
+
+impl Tunnel {
+    pub async fn open(provider: &UsbmuxdProvider) -> Result<Self> {
+        let proxy = bounded("Developer services", CoreDeviceProxy::connect(provider)).await?;
+        let port = proxy.tunnel_info().server_rsd_port;
+        let mut adapter = proxy
+            .create_software_tunnel()
+            .map_err(|e| format!("USB tunnel: {e}"))?
+            .to_async_handle();
+        let stream = bounded("Remote service discovery", adapter.connect(port)).await?;
+        let rsd = bounded("Remote services", RsdHandshake::new(stream)).await?;
+        Ok(Self { adapter, rsd, port })
+    }
+
+    /// Reads the service directory again, e.g. after preparing the phone.
+    pub async fn refresh(&mut self) -> Result<()> {
+        let stream = bounded("Remote service discovery", self.adapter.connect(self.port)).await?;
+        self.rsd = bounded("Remote services", RsdHandshake::new(stream)).await?;
+        Ok(())
+    }
+
+    /// Screen streaming is listed only while the developer image is available.
+    pub fn has_developer_services(&self) -> bool {
+        let name = <DisplayServiceClient<Box<dyn ReadWrite>> as RsdService>::rsd_service_name();
+        self.rsd.services.contains_key(name.as_ref())
+    }
 }
 
 async fn provider(udid: &str) -> Result<UsbmuxdProvider> {
@@ -252,8 +295,29 @@ pub async fn ensure_mounted(provider: &UsbmuxdProvider) -> Result<bool> {
     }
 }
 
+/// Makes the developer services available: mounts the image until the next restart, then
+/// re-reads the service directory.
+pub async fn prepare_developer_services(
+    provider: &UsbmuxdProvider,
+    tunnel: &mut Tunnel,
+) -> Result<()> {
+    ensure_mounted(provider).await?;
+    tunnel.refresh().await?;
+    if tunnel.has_developer_services() {
+        Ok(())
+    } else {
+        Err("The iPhone's developer services did not start. Restart the iPhone; if that doesn't help, turn Developer Mode off and on again.".into())
+    }
+}
+
 pub async fn mount(udid: &str) -> Result<bool> {
-    ensure_mounted(&provider(udid).await?).await
+    let provider = provider(udid).await?;
+    let mut tunnel = Tunnel::open(&provider).await?;
+    if tunnel.has_developer_services() {
+        return Ok(false);
+    }
+    prepare_developer_services(&provider, &mut tunnel).await?;
+    Ok(true)
 }
 
 /// Makes Settings › Privacy & Security › Developer Mode appear; the user still turns it on.
@@ -269,6 +333,14 @@ pub async fn mounted_images(udid: &str) -> Result<Value> {
     let mut mounter = step("Developer services", ImageMounter::connect(&provider)).await?;
     let entries = step("Developer services", mounter.copy_devices()).await?;
     Ok(json!({ "developerImage": mounted_developer_image(&entries), "entries": entries }))
+}
+
+/// Diagnostics only: the service names the phone currently advertises.
+pub async fn service_names(udid: &str) -> Result<Vec<String>> {
+    let tunnel = Tunnel::open(&provider(udid).await?).await?;
+    let mut names: Vec<String> = tunnel.rsd.services.keys().cloned().collect();
+    names.sort();
+    Ok(names)
 }
 
 /// Diagnostics only: undoes a mount so preparation can be tested. Not exposed to the app.

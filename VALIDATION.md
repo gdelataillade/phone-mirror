@@ -935,10 +935,31 @@ New `Backend/src/prepare.rs` (`prepare` diagnostic binary, `pm_prepare_status`,
 (`{"connected":true,"ddiMounted":true,"ddiOnMac":true,"ddiVersion":"27A266a",
 "developerMode":true,"trusted":true}` on the prepared phone); reveals the
 Developer Mode setting; and mounts Xcode's copy of the image with a personalization
-ticket from Apple's signing server when none is mounted. Connecting now checks
-the image first (already mounted: no change) and, if the developer services then
-fail, reports why preparation failed and opens **iPhone → Setup Check…**.
+ticket from Apple's signing server when none is mounted. Connecting opens the
+tunnel and prepares the phone only if the display service isn't advertised (no
+extra requests otherwise); if preparation fails, the error says why and
+**iPhone → Setup Check…** opens.
 
-Not yet verified on the phone: mounting through iPhoneMirror's own path (it needs
-the current image unmounted, which interrupts mirroring), and the Developer Mode
-reveal (needs Developer Mode off).
+Device tests of the mount, 26–28 September (same phone):
+
+- Xcode's persistent image can't be unmounted through the image mounter
+  ("internal error"); it was removed with cryptexd's uninstall instead, after
+  which no developer services were advertised.
+- iPhoneMirror's plain mount (image mounter + Apple signing server) mounted
+  Xcode's copy in 2.2 s and 0.9 s on two runs; the display service was
+  advertised immediately and the installed app mirrored within 2 s.
+- **Do not install the image as a persistent cryptex.** An experimental build
+  did (Xcode's method, via idevice's `install_ddi`) while macOS's CoreDevice was
+  preparing the same phone. The install was interrupted and the phone's cryptexd
+  then aborted at every boot in `_quire_bootstrap_trust_cache` →
+  `_amfi_load_trust_cache` (26 crash reports), so neither iPhoneMirror nor
+  Xcode's Device Hub ("Preparing for development", CoreDevice error 1001) could
+  prepare it, even after restarting the Mac and the iPhone. **Turning Developer
+  Mode off and on cleared it**; the plain mount then worked. That path was
+  removed; the app only uses the plain mount, which lasts until the next restart.
+
+Not yet verified: preparing a phone that Xcode never prepared, on a spare device;
+the automatic mount inside the new app build (the phone was restored with the
+diagnostic tool and the installed 0.3.0 app); the Developer Mode reveal (needs
+Developer Mode off); and whether macOS's CoreDevice then replaces the plain mount
+with its persistent install.

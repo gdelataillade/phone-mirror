@@ -7,7 +7,6 @@ use idevice::core_device::display_stream::{
 use idevice::{
     IdeviceService, ReadWrite, RsdService,
     core_device::*,
-    core_device_proxy::CoreDeviceProxy,
     lockdown::LockdownClient,
     rsd::RsdHandshake,
     tcp::handle::AdapterHandle,
@@ -484,30 +483,27 @@ async fn run(
         let provider = device.to_provider(UsbmuxdAddr::default(), "iPhoneMirror");
         status(tx, "Opening developer services…");
         health::stage(health, 2);
-        // Normally already mounted; otherwise mounts Xcode's copy of the developer image.
-        // Its failure is reported only if the developer services then fail too.
-        let prepared = prepare::ensure_mounted(&provider).await;
-        let services = async {
-            let proxy = bounded("Developer services", CoreDeviceProxy::connect(&provider)).await?;
-            let port = proxy.tunnel_info().server_rsd_port;
-            let mut adapter = proxy
-                .create_software_tunnel()
-                .map_err(|e| format!("USB tunnel: {e}"))?
-                .to_async_handle();
-            health::stage(health, 3);
-            let stream = bounded("Remote service discovery", adapter.connect(port)).await?;
-            let mut rsd = bounded("Remote services", RsdHandshake::new(stream)).await?;
-            let display = bounded(
-                "Display service",
-                DisplayServiceClient::connect_rsd(&mut adapter, &mut rsd),
-            )
-            .await?;
-            Ok::<_, String>((adapter, rsd, display))
-        };
-        services.await.map_err(|e| match prepared {
-            Err(reason) => format!("{DEVELOPER_SERVICES_UNAVAILABLE} {reason}"),
-            Ok(_) => e,
-        })
+        let mut tunnel = prepare::Tunnel::open(&provider).await?;
+        health::stage(health, 3);
+        // Normally already there: Xcode or an earlier run installed the developer image,
+        // which iOS keeps across restarts.
+        if !tunnel.has_developer_services() {
+            status(tx, "Preparing the iPhone…");
+            prepare::prepare_developer_services(&provider, &mut tunnel)
+                .await
+                .map_err(|reason| format!("{DEVELOPER_SERVICES_UNAVAILABLE} {reason}"))?;
+        }
+        let prepare::Tunnel {
+            mut adapter,
+            mut rsd,
+            ..
+        } = tunnel;
+        let display = bounded(
+            "Display service",
+            DisplayServiceClient::connect_rsd(&mut adapter, &mut rsd),
+        )
+        .await?;
+        Ok::<_, String>((adapter, rsd, display))
     };
     let (mut adapter, mut rsd, mut display) = tokio::select! {
         result = connection => result?, _ = cancelled(&mut cancel) => return Ok(()),

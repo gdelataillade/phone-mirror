@@ -1,6 +1,7 @@
-//! Device preparation diagnostics: `prepare [status|images|mount|reveal|unmount] [UDID]`.
+//! Device preparation diagnostics: `prepare COMMAND [UDID]`, where COMMAND is status,
+//! images, rsd (advertised services), mount (what the app does), reveal or unmount.
 //! Uses the first USB iPhone when no UDID is given. `unmount` exists only to test
-//! preparation; the app never unmounts the developer image.
+//! preparation (it cannot remove Xcode's persistent image); the app never unmounts.
 use phone_mirror_backend::{pm_devices, pm_string_free, prepare};
 use std::{ffi::CStr, time::Instant};
 
@@ -44,6 +45,7 @@ fn main() {
             "images" => prepare::mounted_images(&udid)
                 .await
                 .map(|v| format!("{v:#}")),
+            "rsd" => prepare::service_names(&udid).await.map(|n| n.join("\n")),
             "unmount" => prepare::unmount(&udid).await.map(|()| "unmounted".into()),
             other => Err(format!("unknown command {other}")),
         }

@@ -34,7 +34,7 @@ I built it for myself because other tools didn’t work for me.
 - Connect by USB and [trust your Mac](https://support.apple.com/en-us/109054).
 - Enable [Developer Mode](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device). If the setting is missing, **iPhone → Setup Check…** can show it.
 
-iPhoneMirror prepares the iPhone itself the first time it connects, and **Setup Check** shows anything still missing.
+iPhoneMirror prepares the iPhone itself when it needs to (this uses the internet: Apple signs the developer image for each iPhone), and **Setup Check** shows anything still missing.
 
 ## Try it
 
