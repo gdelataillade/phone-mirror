@@ -475,13 +475,18 @@ async fn run(
     status(tx, "Opening USB connection…");
     let connection = async {
         let mut mux = bounded("USB connection", UsbmuxdConnection::default()).await?;
-        let device = bounded("Selected iPhone", mux.get_devices())
-            .await?
-            .into_iter()
-            .find(|d| d.udid == udid && d.connection_type == Connection::Usb)
+        let devices = bounded("Selected iPhone", mux.get_devices()).await?;
+        let device = preferred_connection(devices, udid)
             .ok_or("Connect this iPhone by USB and unlock it.")?;
         let provider = device.to_provider(UsbmuxdAddr::default(), "iPhoneMirror");
-        status(tx, "Opening developer services…");
+        status(
+            tx,
+            if device.connection_type == Connection::Usb {
+                "Opening developer services…"
+            } else {
+                "Opening developer services over Wi-Fi…"
+            },
+        );
         health::stage(health, 2);
         let mut tunnel = prepare::Tunnel::open(&provider).await?;
         health::stage(health, 3);
@@ -530,6 +535,22 @@ async fn run(
     )
     .await;
     result
+}
+
+/// The phone's USB connection when it has one, otherwise its Wi-Fi one (usbmuxd lists a
+/// phone on the network when Wi-Fi connections are on).
+fn preferred_connection(
+    devices: Vec<idevice::usbmuxd::UsbmuxdDevice>,
+    udid: &str,
+) -> Option<idevice::usbmuxd::UsbmuxdDevice> {
+    let mut candidates: Vec<_> = devices
+        .into_iter()
+        .filter(|d| {
+            d.udid == udid && matches!(d.connection_type, Connection::Usb | Connection::Network(_))
+        })
+        .collect();
+    candidates.sort_by_key(|d| d.connection_type != Connection::Usb);
+    candidates.into_iter().next()
 }
 
 fn find_data<'a>(v: &'a plist::Value, key: &str, depth: usize) -> Option<&'a [u8]> {
@@ -1177,6 +1198,39 @@ async fn release(
         }
     };
     let _ = tokio::time::timeout(Duration::from_millis(700), cleanup).await;
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::preferred_connection;
+    use idevice::usbmuxd::{Connection, UsbmuxdDevice};
+    fn device(udid: &str, id: u32, connection_type: Connection) -> UsbmuxdDevice {
+        UsbmuxdDevice {
+            connection_type,
+            udid: udid.into(),
+            device_id: id,
+        }
+    }
+    #[test]
+    fn usb_is_preferred_and_wifi_is_the_fallback() {
+        let wifi = Connection::Network("192.0.2.1".parse().unwrap());
+        let both = vec![
+            device("other", 1, Connection::Usb),
+            device("phone", 2, wifi.clone()),
+            device("phone", 3, Connection::Usb),
+        ];
+        assert_eq!(preferred_connection(both, "phone").unwrap().device_id, 3);
+        let wifi_only = vec![
+            device("phone", 2, wifi),
+            device("other", 1, Connection::Usb),
+        ];
+        assert_eq!(
+            preferred_connection(wifi_only, "phone").unwrap().device_id,
+            2
+        );
+        let unknown = vec![device("phone", 4, Connection::Unknown("?".into()))];
+        assert!(preferred_connection(unknown, "phone").is_none());
+    }
 }
 
 #[cfg(test)]
