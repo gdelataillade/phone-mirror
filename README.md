@@ -7,7 +7,7 @@
 Free, open-source iPhone mirroring and control for Mac, including in the EU.
 I built it for myself because other tools didn’t work for me.
 
-**Early preview; USB only.**
+**Early preview. USB, or Wi-Fi once set up over USB.**
 
 <p align="center">
   <img src="Resources/demo.gif" width="480" alt="iPhoneMirror demo: mirroring and controlling an iPhone from a Mac">
@@ -25,6 +25,7 @@ I built it for myself because other tools didn’t work for me.
 - Audio playback with mute and volume control.
 - Remote rotation, Home, App Switcher, Spotlight and Control Center.
 - Optional iPhone bezels, Always on Top and automatic reconnection.
+- Wi-Fi (experimental): keeps mirroring when you unplug the cable, on the same network. USB is faster and is used whenever it's connected.
 - Opt-in local [API and MCP tools](docs/AUTOMATION.md) for AI-agent device testing.
 
 ## Setup
@@ -35,6 +36,8 @@ I built it for myself because other tools didn’t work for me.
 - Enable [Developer Mode](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device). If the setting is missing, **iPhone → Setup Check…** can show it.
 
 iPhoneMirror prepares the iPhone itself when it needs to (this uses the internet: Apple signs the developer image for each iPhone), and **Setup Check** shows anything still missing.
+
+To mirror without the cable, turn on the iPhone's Wi-Fi connections once while it's plugged in (**Setup Check → Wi-Fi connections**, or Finder's "Show this iPhone when on Wi-Fi"), and keep both on the same network. Wi-Fi adds some latency and needs a network that lets devices see each other (many guest, hotel and office networks don't). **iPhone → Use Wi-Fi When Unplugged** turns it off.
 
 ## Try it
 

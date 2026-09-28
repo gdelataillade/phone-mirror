@@ -988,3 +988,19 @@ iOS 27, a video playing full-screen, 60 s each:
 
 Not yet measured: a 60 fps workload (scrolling), input latency, a busy or distant
 network, and the app itself over Wi-Fi.
+
+Wi-Fi in the app, same day (branch build, phone unplugged unless noted):
+
+- With the cable out, **Mirror iPhone** connected over Wi-Fi on the first attempt:
+  "Live over Wi-Fi", 30 fps on a video, agent API `transport: "wifi"`, and the
+  title bar read "Agent access on · Wi-Fi". Screenshots and an agent swipe worked
+  (the feed scrolled; request round trip 385 ms including the 0.3 s gesture).
+- Plugging the cable in during the Wi-Fi session kept it running and showed the
+  "(⇧⌘R for USB)" hint (truncated in the narrowest window with agent access on);
+  **Reconnect Now** switched to USB within 1 s, with a new session.
+- Unplugging during the USB session reopened over Wi-Fi within about a second:
+  new session, "Live over Wi-Fi", 30 fps.
+
+Not yet verified: turning **Use Wi-Fi When Unplugged** off mid-session, the Setup
+Check "Turn On" button (the phone already had Wi-Fi connections on), a busy or
+distant network, and 60 fps workloads over Wi-Fi.

@@ -341,24 +341,27 @@ struct MirrorTitleBar: View {
     .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
   }
   private var subtitle: (text: String, style: Color)? {
+    let device = model.selected
+    let text: String
+    let style: Color
     if recorder.recording {
-      return (
-        String(format: "Recording %d:%02d", recorder.elapsed / 60, recorder.elapsed % 60), .red
-      )
+      text = String(format: "Recording %d:%02d", recorder.elapsed / 60, recorder.elapsed % 60)
+      style = .red
+    } else if model.automationEnabled {
+      // Short, so " · Wi-Fi" still fits in the narrowest window.
+      text = model.automationBusy ? "Agent in control" : "Agent access on"
+      style = .accentColor
+    } else if let device {
+      text = "iOS \(device.version)"
+      style = .secondary
+    } else {
+      return ("Waiting for iPhone…", .secondary)
     }
-    if model.automationEnabled {
-      return (
-        model.automationBusy ? "Agent controlling iPhone" : "Agent access enabled", .accentColor
-      )
-    }
-    guard let device = model.selected else { return ("Waiting for iPhone…", .secondary) }
-    var text = "iOS \(device.version)"
     // The session's transport, or before connecting, how the phone was found.
-    if model.transport == .wifi || (model.transport == nil && device.transport == "Wi-Fi") {
-      text += " · Wi-Fi"
-    }
-    if model.usbAvailableOnWiFi { text += " · USB connected, ⇧⌘R to switch" }
-    return (text, .secondary)
+    let wifi =
+      model.transport == .wifi || (model.transport == nil && device?.transport == "Wi-Fi")
+    guard wifi else { return (text, style) }
+    return (text + (model.usbAvailableOnWiFi ? " · Wi-Fi (⇧⌘R for USB)" : " · Wi-Fi"), style)
   }
 }
 
