@@ -12,6 +12,11 @@ struct DeviceList: Codable {
   let devices: [PhoneDevice]
   let error: String?
 }
+// Matches pm_prepare's `action` parameter (PhoneMirror.h) exactly.
+enum PrepareAction: UInt32 {
+  case revealDeveloperMode = 1
+  case mountDeveloperImage = 2
+}
 // Matches pm_paste_image's `format` parameter (PhoneMirror.h) exactly.
 enum ImageFormat: UInt32 {
   case png = 0
@@ -296,6 +301,38 @@ final class NativeSession: @unchecked Sendable {
   /// An in-flight pm_app_start request. It borrows nothing from the session handle and
   /// pm_app_wait consumes it exactly once, so handing it to another thread is safe.
   private struct AppCall: @unchecked Sendable { let pointer: OpaquePointer }
+  /// Checks the setup off the main thread; the phone is not modified.
+  static func setupStatus(device: String, completion: @escaping (SetupStatus) -> Void) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      let unavailable = SetupStatus(
+        ddiOnMac: false, connected: false, detail: "Setup check failed. Try again.")
+      guard let text = device.withCString({ pm_prepare_status($0) }) else {
+        completion(unavailable)
+        return
+      }
+      defer { pm_string_free(text) }
+      completion(
+        (try? JSONDecoder().decode(SetupStatus.self, from: Data(String(cString: text).utf8)))
+          ?? unavailable)
+    }
+  }
+  /// Runs one preparation step off the main thread; completes with nil or an error message.
+  static func prepare(
+    device: String, _ action: PrepareAction, completion: @escaping (String?) -> Void
+  ) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      guard let text = device.withCString({ pm_prepare($0, action.rawValue) }) else {
+        completion("Preparation failed. Try again.")
+        return
+      }
+      defer { pm_string_free(text) }
+      let json =
+        (try? JSONSerialization.jsonObject(with: Data(String(cString: text).utf8)))
+        as? [String: Any]
+      completion(
+        json?["ok"] as? Bool == true ? nil : json?["error"] as? String ?? "Preparation failed.")
+    }
+  }
   static func discover(completion: @escaping (DeviceList) -> Void) {
     DispatchQueue.global(qos: .userInitiated).async {
       guard let text = pm_devices() else {

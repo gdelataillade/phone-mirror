@@ -9,7 +9,7 @@ name = "phone_mirror_backend"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-idevice = { path = "../Vendor/idevice", default-features = false, features = ["ring", "usbmuxd", "core_device_proxy", "tunnel_tcp_stack", "display_stream", "tcp"] }
+idevice = { path = "../Vendor/idevice", default-features = false, features = ["ring", "usbmuxd", "core_device_proxy", "tunnel_tcp_stack", "display_stream", "tcp", "amfi", "mobile_image_mounter", "tss"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 serde_json = "1"
 plist = "1.8"

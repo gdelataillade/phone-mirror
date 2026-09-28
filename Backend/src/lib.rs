@@ -7,7 +7,6 @@ use idevice::core_device::display_stream::{
 use idevice::{
     IdeviceService, ReadWrite, RsdService,
     core_device::*,
-    core_device_proxy::CoreDeviceProxy,
     lockdown::LockdownClient,
     rsd::RsdHandshake,
     tcp::handle::AdapterHandle,
@@ -24,6 +23,7 @@ use tokio::sync::{mpsc as async_mpsc, watch};
 mod apps;
 mod health;
 mod orientation;
+pub mod prepare;
 mod presence;
 pub use presence::*;
 
@@ -111,6 +111,8 @@ enum Command {
     // The UTI to set it under: UTI_PNG or UTI_JPEG, chosen by the caller.
     PasteImage(Vec<u8>, &'static str),
 }
+/// Prefix the app recognizes to offer Setup Check.
+const DEVELOPER_SERVICES_UNAVAILABLE: &str = "Developer services are unavailable.";
 fn status(tx: &mpsc::SyncSender<PMEvent>, message: &str) {
     let _ = tx.try_send(PMEvent::message(1, message));
 }
@@ -124,6 +126,54 @@ pub extern "C" fn pm_devices() -> *mut c_char {
     CString::new(value.to_string())
         .unwrap_or_default()
         .into_raw()
+}
+/// Setup prerequisites for one USB iPhone as JSON (see prepare::status). Blocks; never
+/// modifies the phone. Free with pm_string_free.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pm_prepare_status(udid: *const c_char) -> *mut c_char {
+    let value = match unsafe { c_text(udid) } {
+        Some(udid) => runtime()
+            .map(|rt| rt.block_on(prepare::status(&udid)))
+            .unwrap_or_else(|e| serde_json::json!({ "connected": false, "detail": e })),
+        None => serde_json::json!({ "connected": false, "detail": "Invalid device" }),
+    };
+    CString::new(value.to_string())
+        .unwrap_or_default()
+        .into_raw()
+}
+/// 1 reveals the Developer Mode setting, 2 mounts the developer disk image. Blocks.
+/// Returns {"ok":true} (with "mounted" for 2) or {"error":"…"}; free with pm_string_free.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pm_prepare(udid: *const c_char, action: u32) -> *mut c_char {
+    let result = match unsafe { c_text(udid) } {
+        None => Err("Invalid device".to_string()),
+        Some(udid) => runtime().and_then(|rt| {
+            rt.block_on(async {
+                match action {
+                    1 => prepare::reveal_developer_mode(&udid)
+                        .await
+                        .map(|()| serde_json::json!({ "ok": true })),
+                    2 => prepare::mount(&udid)
+                        .await
+                        .map(|mounted| serde_json::json!({ "ok": true, "mounted": mounted })),
+                    _ => Err("Unknown preparation step".into()),
+                }
+            })
+        }),
+    };
+    let value = result.unwrap_or_else(|e| serde_json::json!({ "error": e }));
+    CString::new(value.to_string())
+        .unwrap_or_default()
+        .into_raw()
+}
+unsafe fn c_text(text: *const c_char) -> Option<String> {
+    if text.is_null() {
+        return None;
+    }
+    unsafe { CStr::from_ptr(text) }
+        .to_str()
+        .ok()
+        .map(str::to_owned)
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pm_string_free(text: *mut c_char) {
@@ -433,19 +483,21 @@ async fn run(
         let provider = device.to_provider(UsbmuxdAddr::default(), "iPhoneMirror");
         status(tx, "Opening developer services…");
         health::stage(health, 2);
-        let proxy = bounded(
-            "Developer services (prepare the device in Xcode first)",
-            CoreDeviceProxy::connect(&provider),
-        )
-        .await?;
-        let port = proxy.tunnel_info().server_rsd_port;
-        let mut adapter = proxy
-            .create_software_tunnel()
-            .map_err(|e| format!("USB tunnel: {e}"))?
-            .to_async_handle();
+        let mut tunnel = prepare::Tunnel::open(&provider).await?;
         health::stage(health, 3);
-        let stream = bounded("Remote service discovery", adapter.connect(port)).await?;
-        let mut rsd = bounded("Remote services", RsdHandshake::new(stream)).await?;
+        // Normally already there: Xcode or an earlier run installed the developer image,
+        // which iOS keeps across restarts.
+        if !tunnel.has_developer_services() {
+            status(tx, "Preparing the iPhone…");
+            prepare::prepare_developer_services(&provider, &mut tunnel)
+                .await
+                .map_err(|reason| format!("{DEVELOPER_SERVICES_UNAVAILABLE} {reason}"))?;
+        }
+        let prepare::Tunnel {
+            mut adapter,
+            mut rsd,
+            ..
+        } = tunnel;
         let display = bounded(
             "Display service",
             DisplayServiceClient::connect_rsd(&mut adapter, &mut rsd),
@@ -732,7 +784,7 @@ async fn stream(
                     || metrics.queue_overflows>0 || metrics.discontinuities>0;
                 if received && stalled && last_frame.elapsed()>Duration::from_secs(8) {break Err("The video pipeline stopped producing complete pictures. Reconnecting.".into());}
                 if stalled && last_frame.elapsed()>Duration::from_secs(2) {request_refresh=true;}
-                if !received && started.elapsed()>Duration::from_secs(20) {break Err("No complete video frame arrived. Unlock the phone, prepare it in Xcode, then reconnect.".into());}
+                if !received && started.elapsed()>Duration::from_secs(20) {break Err("No complete video frame arrived. Unlock the iPhone and reconnect; iPhone › Setup Check… shows anything missing.".into());}
                 if first_seq.is_some() {
                     if let Err(error)=send_feedback(video.send_to(remote_video_port,build_rctl(our_ssrc,started.elapsed().as_millis() as u16,frames,relative_seq)), &mut metrics).await {break Err(error);}
                 }
@@ -1125,6 +1177,18 @@ async fn release(
         }
     };
     let _ = tokio::time::timeout(Duration::from_millis(700), cleanup).await;
+}
+
+#[cfg(test)]
+mod prepare_prefix_tests {
+    #[test]
+    fn failure_prefix_matches_the_app() {
+        // Sources/MirrorCore/SetupStatus.swift developerServicesUnavailablePrefix.
+        assert_eq!(
+            super::DEVELOPER_SERVICES_UNAVAILABLE,
+            "Developer services are unavailable."
+        );
+    }
 }
 
 #[cfg(test)]

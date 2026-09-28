@@ -908,3 +908,59 @@ Cable removal and phone sleep, same day, with a harness running back-to-back
 Known limitation: `canControl` and `accepted: true` do not prove the phone is
 receiving input (screen off, locked, or just unplugged). Agents must verify
 each step with a fresh screenshot, as documented.
+
+## Device preparation without opening Xcode, 26 September
+
+What "prepare the phone in Xcode" provides, checked on iPhone 17 / iOS 27.0 with
+Xcode 27 installed:
+
+- Screen streaming, HID input and app control are developer services: they need
+  Developer Mode and Apple's personalized Developer Disk Image (DDI) mounted at
+  `/System/Developer`.
+- The DDI is 32 MB, one universal image (build 27A266a, 140 personalized
+  identities plus a Cryptex identity). It ships only inside Xcode
+  (`XcodeSystemResources.pkg`), which installs it on first launch to
+  `/Library/Developer/DeveloperDiskImages/iOS_DDI`. It is not redistributed.
+- **Xcode 27 installs it as a persistent cryptex**: the mounter lists
+  `/System/Developer` backed by
+  `/private/var/db/com.apple.security.cryptexd/…/com.apple.MobileAsset.DDI`, so
+  iOS remounts it at every boot. This is why mirroring works after an iPhone
+  restart without opening Xcode. Preparation is effectively once per phone.
+- The mounter's `LookupImage` reports "not found" for Personalized, Developer
+  and Cryptex even while that image is mounted, so readiness is read from
+  `CopyDevices` (the mounted list) instead.
+
+New `Backend/src/prepare.rs` (`prepare` diagnostic binary, `pm_prepare_status`,
+`pm_prepare`): reports trust, Developer Mode, the mounted image and whether its
+services are advertised (the mount alone isn't enough, see below) in ~0.13 s
+(`{"connected":true,"ddiMounted":true,"ddiOnMac":true,"ddiVersion":"27A266a",
+"developerMode":true,"trusted":true}` on the prepared phone); reveals the
+Developer Mode setting; and mounts Xcode's copy of the image with a personalization
+ticket from Apple's signing server when none is mounted. Connecting opens the
+tunnel and prepares the phone only if the display service isn't advertised (no
+extra requests otherwise); if preparation fails, the error says why and
+**iPhone → Setup Check…** opens.
+
+Device tests of the mount, 26–28 September (same phone):
+
+- Xcode's persistent image can't be unmounted through the image mounter
+  ("internal error"); it was removed with cryptexd's uninstall instead, after
+  which no developer services were advertised.
+- iPhoneMirror's plain mount (image mounter + Apple signing server) mounted
+  Xcode's copy in 2.2 s and 0.9 s on two runs; the display service was
+  advertised immediately and the installed app mirrored within 2 s.
+- **Do not install the image as a persistent cryptex.** An experimental build
+  did (Xcode's method, via idevice's `install_ddi`) while macOS's CoreDevice was
+  preparing the same phone. The install was interrupted and the phone's cryptexd
+  then aborted at every boot in `_quire_bootstrap_trust_cache` →
+  `_amfi_load_trust_cache` (26 crash reports), so neither iPhoneMirror nor
+  Xcode's Device Hub ("Preparing for development", CoreDevice error 1001) could
+  prepare it, even after restarting the Mac and the iPhone. **Turning Developer
+  Mode off and on cleared it**; the plain mount then worked. That path was
+  removed; the app only uses the plain mount, which lasts until the next restart.
+
+Not yet verified: preparing a phone that Xcode never prepared, on a spare device;
+the automatic mount inside the new app build (the phone was restored with the
+diagnostic tool and the installed 0.3.0 app); the Developer Mode reveal (needs
+Developer Mode off); and whether macOS's CoreDevice then replaces the plain mount
+with its persistent install.
