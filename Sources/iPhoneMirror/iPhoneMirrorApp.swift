@@ -90,6 +90,7 @@ import SwiftUI
           "r", modifiers: [.command, .shift]
         ).disabled(!model.canReconnect)
         Button("Refresh Devices") { model.refresh() }.keyboardShortcut("r").disabled(model.active)
+        Toggle("Use Wi-Fi When Unplugged", isOn: $model.useWiFi)
         Button("Disconnect") { model.disconnect() }.keyboardShortcut(
           "d", modifiers: [.command, .shift]
         ).disabled(!model.active)
@@ -223,7 +224,10 @@ struct MirrorWindow: View {
       Text(
         model.error
           ?? (model.active
-            ? model.status : "Connect by USB, unlock your iPhone,\nand keep it within reach.")
+            ? model.status
+            : model.useWiFi
+              ? "Connect by USB or Wi-Fi, unlock your iPhone,\nand keep it within reach."
+              : "Connect by USB, unlock your iPhone,\nand keep it within reach.")
       )
       .font(.system(size: 13)).foregroundStyle(.secondary).multilineTextAlignment(.center)
       .lineSpacing(4).fixedSize(horizontal: false, vertical: true).padding(.top, 13).padding(
@@ -337,18 +341,27 @@ struct MirrorTitleBar: View {
     .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
   }
   private var subtitle: (text: String, style: Color)? {
+    let device = model.selected
+    let text: String
+    let style: Color
     if recorder.recording {
-      return (
-        String(format: "Recording %d:%02d", recorder.elapsed / 60, recorder.elapsed % 60), .red
-      )
+      text = String(format: "Recording %d:%02d", recorder.elapsed / 60, recorder.elapsed % 60)
+      style = .red
+    } else if model.automationEnabled {
+      // Short, so " · Wi-Fi" still fits in the narrowest window.
+      text = model.automationBusy ? "Agent in control" : "Agent access on"
+      style = .accentColor
+    } else if let device {
+      text = "iOS \(device.version)"
+      style = .secondary
+    } else {
+      return ("Waiting for iPhone…", .secondary)
     }
-    if model.automationEnabled {
-      return (
-        model.automationBusy ? "Agent controlling iPhone" : "Agent access enabled", .accentColor
-      )
-    }
-    guard let device = model.selected else { return ("Waiting for iPhone…", .secondary) }
-    return ("iOS \(device.version)", .secondary)
+    // The session's transport, or before connecting, how the phone was found.
+    let wifi =
+      model.transport == .wifi || (model.transport == nil && device?.transport == .wifi)
+    guard wifi else { return (text, style) }
+    return (text + (model.usbAvailableOnWiFi ? " · Wi-Fi (⇧⌘R for USB)" : " · Wi-Fi"), style)
   }
 }
 

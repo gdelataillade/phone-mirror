@@ -964,3 +964,43 @@ the automatic mount inside the new app build (the phone was restored with the
 diagnostic tool and the installed 0.3.0 app); the Developer Mode reveal (needs
 Developer Mode off); and whether macOS's CoreDevice then replaces the plain mount
 with its persistent install.
+
+## Wi-Fi feasibility, 28 September
+
+With the cable unplugged, usbmuxd lists the iPhone as a network device (Wi-Fi
+connections are on: `EnableWifiConnections` = true). Over that connection a
+read-only probe opened a lockdown session (320 ms), the CoreDeviceProxy tunnel
+(246 ms, MTU 16000) and service discovery (114 ms, 85 services) with the display,
+HID/device-control, app, pasteboard and image-mounter services all advertised.
+
+The backend now prefers the USB connection and falls back to the Wi-Fi one, and
+`probe [SECONDS] [UDID]` reports frame timing and native counters. Same iPhone 17 /
+iOS 27, a video playing full-screen, 60 s each:
+
+| | USB | Wi-Fi |
+| --- | --- | --- |
+| First frame | 0.59 s | 0.99 s |
+| Average frame rate | 33.6 fps | 32.8 fps |
+| Longest frame gap | 87 ms | 151 ms |
+| Gaps over 250 ms | 0 | 0 |
+| Discontinuities / refresh requests / queue overflows | 0 / 0 / 0 | 0 / 0 / 0 |
+| Slowest orientation query round trip | 9 ms | 130 ms |
+
+Not yet measured: a 60 fps workload (scrolling), input latency, a busy or distant
+network, and the app itself over Wi-Fi.
+
+Wi-Fi in the app, same day (branch build, phone unplugged unless noted):
+
+- With the cable out, **Mirror iPhone** connected over Wi-Fi on the first attempt:
+  "Live over Wi-Fi", 30 fps on a video, agent API `transport: "wifi"`, and the
+  title bar read "Agent access on · Wi-Fi". Screenshots and an agent swipe worked
+  (the feed scrolled; request round trip 385 ms including the 0.3 s gesture).
+- Plugging the cable in during the Wi-Fi session kept it running and showed the
+  "(⇧⌘R for USB)" hint (truncated in the narrowest window with agent access on);
+  **Reconnect Now** switched to USB within 1 s, with a new session.
+- Unplugging during the USB session reopened over Wi-Fi within about a second:
+  new session, "Live over Wi-Fi", 30 fps.
+
+Not yet verified: turning **Use Wi-Fi When Unplugged** off mid-session, the Setup
+Check "Turn On" button (the phone already had Wi-Fi connections on), a busy or
+distant network, and 60 fps workloads over Wi-Fi.

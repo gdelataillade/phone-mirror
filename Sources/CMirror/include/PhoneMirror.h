@@ -5,21 +5,27 @@
 typedef struct PMHandle PMHandle;
 typedef struct PMEvent PMEvent;
 typedef struct PMPresence PMPresence;
-PMPresence *pm_presence_start(const char *udid);
-// Nonblocking: 0 no event, 1 USB attached, 2 USB absent, 3 monitoring unavailable.
+// transports: 1 USB only, 3 USB or Wi-Fi (usbmuxd's network connection).
+PMPresence *pm_presence_start(const char *udid, uint32_t transports);
+// Nonblocking: 0 no event, 1 on USB, 2 absent, 3 monitoring unavailable,
+// 4 reachable over Wi-Fi only (only when Wi-Fi was allowed).
 int32_t pm_presence_poll(PMPresence *handle);
 void pm_presence_close(PMPresence *handle);
 // Returned text is UTF-8 JSON. Caller frees it with pm_string_free.
 char *pm_devices(void);
 void pm_string_free(char *text);
 // Setup prerequisites for a USB iPhone as JSON: ddiOnMac, connected, trusted,
-// developerMode, ddiMounted, ddiVersion, developerServices, detail. Blocks; never modifies
+// developerMode, ddiMounted, ddiVersion, developerServices, wifiConnections, detail.
+// Uses USB, or Wi-Fi when unplugged. Blocks; never modifies
 // the phone. Opens its own tunnel: don't call it during a mirroring session.
 char *pm_prepare_status(const char *udid);
 // 1 reveal the Developer Mode setting, 2 mount the developer disk image from Xcode's copy
-// on this Mac. Blocks. JSON {"ok":true[,"mounted":bool]} or {"error":"..."}.
+// on this Mac, 3 turn on the phone's Wi-Fi connections. Blocks.
+// JSON {"ok":true[,"mounted":bool]} or {"error":"..."}.
 char *pm_prepare(const char *udid, uint32_t action);
-PMHandle *pm_start(const char *udid);
+// transports: 1 USB only, 3 USB preferred with Wi-Fi fallback. Event kind 8 reports the
+// transport used ("usb" or "wifi").
+PMHandle *pm_start(const char *udid, uint32_t transports);
 // Numeric-only telemetry JSON; free with pm_string_free. No identity or payloads.
 char *pm_health(PMHandle *handle);
 // One consumer only. Events own their bytes until pm_event_free. No callbacks.

@@ -26,7 +26,7 @@ guard let device = list.devices.first else {
   print("No USB iPhone available")
   exit(2)
 }
-guard let session = device.id.withCString({ pm_start($0) }) else { exit(2) }
+guard let session = device.id.withCString({ pm_start($0, 1) }) else { exit(2) }
 let mailbox = FrameMailbox()
 let decoder = HEVCDecoder(mailbox: mailbox)
 let began = ProcessInfo.processInfo.systemUptime

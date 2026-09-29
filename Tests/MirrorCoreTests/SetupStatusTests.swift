@@ -66,6 +66,16 @@ final class SetupStatusTests: XCTestCase {
     XCTAssertEqual(unprepared.state(of: .services), .needed)
   }
 
+  func testWiFiConnectionsAreOptional() throws {
+    let usbOnly = try decode(
+      #"{"connected":true,"ddiMounted":true,"ddiOnMac":true,"developerMode":true,"developerServices":true,"trusted":true,"wifiConnections":false}"#
+    )
+    XCTAssertEqual(usbOnly.state(of: .wifiConnections), .needed)
+    XCTAssertTrue(usbOnly.isReady)
+    XCTAssertEqual(
+      SetupStatus(ddiOnMac: true, connected: false).state(of: .wifiConnections), .unknown)
+  }
+
   func testFailurePrefixMatchesTheBackend() {
     // Backend/src/lib.rs DEVELOPER_SERVICES_UNAVAILABLE.
     XCTAssertEqual(developerServicesUnavailablePrefix, "Developer services are unavailable.")

@@ -122,6 +122,7 @@ extension MirrorModel {
         } as Any? ?? NSNull(),
         "width": Int(screenSize.width), "height": Int(screenSize.height),
         "fps": fps, "busy": automationBusy, "status": status,
+        "transport": transport.map { $0.rawValue as Any } ?? NSNull(),
         "capabilities": [
           "screenshot", "tap", "swipe", "type", "key", "home", "button",
           "app_switcher", "spotlight", "control_center", "rotate", "release",

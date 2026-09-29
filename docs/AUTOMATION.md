@@ -49,7 +49,7 @@ body limit 128 KiB. Errors have `{ "error": "..." }` and a non-200 HTTP status.
 
 | Method/path | Result |
 | --- | --- |
-| `GET /v1/status` | Connection/control readiness, sessionID, observationID, dimensions, decoded FPS, busy flag and capabilities |
+| `GET /v1/status` | Connection/control readiness, sessionID, observationID, dimensions, decoded FPS, busy flag, capabilities and `transport` (`usb`, `wifi` or null) |
 | `GET /v1/screenshot` | Upright PNG as base64 `image`, mimeType, width/height, sessionID, observationID, frameID and ageSeconds |
 | `GET /v1/screenshot?format=png` | The same PNG as the raw response body; metadata in `X-iPhoneMirror-Width`, `-Height`, `-SessionID`, `-ObservationID`, `-FrameID` and `-AgeSeconds` headers |
 | `POST /v1/actions` | Validated input action; returns accepted and a sessionID when connected |
@@ -111,7 +111,9 @@ maps these through the current orientation to the native digitizer.
 | `release` | — | Cancel the current gesture and request release of held input |
 
 Pass optional `sessionID` and `observationID` from the screenshot to reject
-actions after reconnect or orientation/geometry changes. These guards do not
+actions after reconnect or orientation/geometry changes. Switching between USB and
+Wi-Fi (unplugging, or Reconnect Now with the cable back) is a reconnect: it starts a
+new session, so observe again before acting. These guards do not
 prove the same UI is still visible. Inspect after each action that can change
 the screen. Screenshot encoding also rejects a session/orientation change.
 

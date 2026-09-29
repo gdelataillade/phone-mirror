@@ -1,11 +1,11 @@
 //! Device preparation diagnostics: `prepare COMMAND [UDID]`, where COMMAND is status,
 //! images, rsd (advertised services), mount (what the app does), reveal or unmount.
-//! Uses the first USB iPhone when no UDID is given. `unmount` exists only to test
+//! Uses the first iPhone found (USB, else Wi-Fi) when no UDID is given. `unmount` exists only to test
 //! preparation (it cannot remove Xcode's persistent image); the app never unmounts.
 use phone_mirror_backend::{pm_devices, pm_string_free, prepare};
 use std::{ffi::CStr, time::Instant};
 
-fn first_usb_device() -> Option<String> {
+fn first_device() -> Option<String> {
     unsafe {
         let json = pm_devices();
         let text = CStr::from_ptr(json).to_string_lossy().into_owned();
@@ -22,8 +22,8 @@ fn first_usb_device() -> Option<String> {
 fn main() {
     let mut args = std::env::args().skip(1);
     let command = args.next().unwrap_or_else(|| "status".into());
-    let Some(udid) = args.next().or_else(first_usb_device) else {
-        eprintln!("No USB iPhone found.");
+    let Some(udid) = args.next().or_else(first_device) else {
+        eprintln!("No iPhone found.");
         std::process::exit(1)
     };
     let runtime = tokio::runtime::Runtime::new().expect("runtime");

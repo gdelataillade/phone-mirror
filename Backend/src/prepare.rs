@@ -22,7 +22,7 @@ use idevice::{
     provider::{IdeviceProvider, UsbmuxdProvider},
     rsd::RsdHandshake,
     tcp::handle::AdapterHandle,
-    usbmuxd::{Connection, UsbmuxdAddr, UsbmuxdConnection},
+    usbmuxd::{UsbmuxdAddr, UsbmuxdConnection},
 };
 use serde_json::{Value, json};
 use std::{
@@ -136,14 +136,42 @@ impl Tunnel {
     }
 }
 
+/// The phone over USB, or over Wi-Fi when it isn't plugged in.
 async fn provider(udid: &str) -> Result<UsbmuxdProvider> {
-    let mut mux = bounded("USB connection", UsbmuxdConnection::default()).await?;
-    let device = bounded("Selected iPhone", mux.get_devices())
-        .await?
-        .into_iter()
-        .find(|d| d.udid == udid && d.connection_type == Connection::Usb)
+    let mut mux = bounded("Device connection", UsbmuxdConnection::default()).await?;
+    let devices = bounded("Selected iPhone", mux.get_devices()).await?;
+    let device = super::preferred_connection(&devices, udid, true)
         .ok_or("Connect this iPhone by USB and unlock it.")?;
     Ok(device.to_provider(UsbmuxdAddr::default(), "iPhoneMirror"))
+}
+
+const WIRELESS_DOMAIN: &str = "com.apple.mobile.wireless_lockdown";
+
+/// The phone's own switch (Finder calls it "Show this iPhone when on Wi-Fi") that lets
+/// usbmuxd reach it over the network.
+async fn wifi_connections(provider: &UsbmuxdProvider) -> Result<bool> {
+    let mut lockdown = session(provider, "Wi-Fi connections").await?;
+    let value = step(
+        "Wi-Fi connections",
+        lockdown.get_value(Some("EnableWifiConnections"), Some(WIRELESS_DOMAIN)),
+    )
+    .await?;
+    Ok(value.as_boolean() == Some(true))
+}
+
+/// Turns on the phone's Wi-Fi connections, as Finder's checkbox does.
+pub async fn enable_wifi_connections(udid: &str) -> Result<()> {
+    let provider = provider(udid).await?;
+    let mut lockdown = session(&provider, "Wi-Fi connections").await?;
+    step(
+        "Wi-Fi connections",
+        lockdown.set_value(
+            "EnableWifiConnections",
+            plist::Value::Boolean(true),
+            Some(WIRELESS_DOMAIN),
+        ),
+    )
+    .await
 }
 
 /// A readable reason for the failures a user can fix.
@@ -200,10 +228,17 @@ pub fn mounted_developer_image(entries: &[plist::Value]) -> Option<String> {
         })
 }
 
+/// A lockdown session under this Mac's pairing record; failing here means the phone
+/// doesn't trust this Mac.
+async fn session(provider: &UsbmuxdProvider, label: &str) -> Result<LockdownClient> {
+    let mut lockdown = step(label, LockdownClient::connect(provider)).await?;
+    let pairing = step(label, provider.get_pairing_file()).await?;
+    step(label, lockdown.start_session(&pairing)).await?;
+    Ok(lockdown)
+}
+
 async fn unique_chip_id(provider: &UsbmuxdProvider) -> Result<u64> {
-    let mut lockdown = step("Trust check", LockdownClient::connect(provider)).await?;
-    let pairing = step("Trust check", provider.get_pairing_file()).await?;
-    step("Trust check", lockdown.start_session(&pairing)).await?;
+    let mut lockdown = session(provider, "Trust check").await?;
     step(
         "Device identity",
         lockdown.get_value(Some("UniqueChipID"), None),
@@ -220,7 +255,7 @@ pub async fn status(udid: &str) -> Value {
     let mut out = json!({
         "ddiOnMac": ddi_files(Path::new(DDI_RESTORE_DIR)).is_ok(),
         "connected": false, "trusted": null, "developerMode": null, "ddiMounted": null,
-        "ddiVersion": null, "developerServices": null,
+        "ddiVersion": null, "developerServices": null, "wifiConnections": null,
     });
     let provider = match provider(udid).await {
         Ok(p) => p,
@@ -236,6 +271,8 @@ pub async fn status(udid: &str) -> Value {
         return out;
     }
     out["trusted"] = true.into();
+    // Optional: only needed for mirroring without the cable.
+    out["wifiConnections"] = wifi_connections(&provider).await.ok().into();
     let mut mounter = match step("Developer services", ImageMounter::connect(&provider)).await {
         Ok(m) => m,
         Err(e) => {

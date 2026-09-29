@@ -9,7 +9,7 @@ iPhone app or WebDriverAgent installation.
 
 1. Build and open iPhoneMirror, then connect your unlocked USB iPhone normally.
 2. Choose **Automation → Enable Agent Access**. Access starts disabled each time
-   the app launches. The window's subtitle then reads "Agent access enabled".
+   the app launches. The window's subtitle then reads "Agent access on" ("Agent in control" during an agent gesture).
 3. From the repository root, register the bridge:
 
    ```sh

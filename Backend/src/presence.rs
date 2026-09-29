@@ -1,4 +1,5 @@
-//! USB presence notifications are independent of media and remain alive during retry backoff.
+//! Presence notifications (USB, and optionally usbmuxd's Wi-Fi entries) are independent of
+//! media and remain alive during retry backoff.
 use crate::{bounded, cancelled, runtime};
 use idevice::usbmuxd::{Connection, UsbmuxdConnection, UsbmuxdListenEvent};
 use std::{
@@ -16,40 +17,70 @@ pub struct PMPresence {
     worker: Option<thread::JoinHandle<()>>,
 }
 
+/// Values pm_presence_poll delivers.
+const ON_USB: i32 = 1;
+const ABSENT: i32 = 2;
+const UNAVAILABLE: i32 = 3;
+const WIFI_ONLY: i32 = 4;
+
 #[derive(Default)]
 struct PresenceState {
-    ids: BTreeSet<u32>,
+    usb: BTreeSet<u32>,
+    wifi: BTreeSet<u32>,
+    allow_wifi: bool,
 }
 impl PresenceState {
+    fn reach(&self) -> i32 {
+        if !self.usb.is_empty() {
+            ON_USB
+        } else if !self.wifi.is_empty() {
+            WIFI_ONLY
+        } else {
+            ABSENT
+        }
+    }
+    /// The new reach when this event changed it.
     fn apply(&mut self, target: &str, event: UsbmuxdListenEvent) -> Option<i32> {
-        let before = !self.ids.is_empty();
+        let before = self.reach();
         match event {
-            UsbmuxdListenEvent::Connected(d)
-                if d.udid == target && d.connection_type == Connection::Usb =>
-            {
-                self.ids.insert(d.device_id);
-            }
+            UsbmuxdListenEvent::Connected(d) if d.udid == target => match d.connection_type {
+                Connection::Usb => {
+                    self.usb.insert(d.device_id);
+                }
+                Connection::Network(_) if self.allow_wifi => {
+                    self.wifi.insert(d.device_id);
+                }
+                _ => {}
+            },
             UsbmuxdListenEvent::Disconnected(id) => {
-                self.ids.remove(&id);
+                self.usb.remove(&id);
+                self.wifi.remove(&id);
             }
             _ => {}
         }
-        let after = !self.ids.is_empty();
-        (before != after).then_some(if after { 1 } else { 2 })
+        let after = self.reach();
+        (before != after).then_some(after)
     }
 }
-async fn observe(udid: &str, events: &mpsc::SyncSender<i32>) -> crate::Result<()> {
+async fn observe(
+    udid: &str,
+    allow_wifi: bool,
+    events: &mpsc::SyncSender<i32>,
+) -> crate::Result<()> {
     let mut mux = bounded("USB monitor", UsbmuxdConnection::default()).await?;
     // Subscribe first, then take a snapshot on another socket so no detach is lost between them.
     let mut stream = bounded("USB notifications", mux.listen()).await?;
     let mut snapshot = bounded("USB snapshot", UsbmuxdConnection::default()).await?;
     let devices = bounded("USB devices", snapshot.get_devices()).await?;
-    let mut state = PresenceState::default();
+    let mut state = PresenceState {
+        allow_wifi,
+        ..Default::default()
+    };
     for device in devices {
         state.apply(udid, UsbmuxdListenEvent::Connected(device));
     }
     events
-        .try_send(if state.ids.is_empty() { 2 } else { 1 })
+        .try_send(state.reach())
         .map_err(|_| "Monitor closed")?;
     while let Some(event) = std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await {
         let event = event.map_err(|e| e.to_string())?;
@@ -60,7 +91,10 @@ async fn observe(udid: &str, events: &mpsc::SyncSender<i32>) -> crate::Result<()
     Err("USB notifications ended".into())
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pm_presence_start(udid: *const c_char) -> *mut PMPresence {
+pub unsafe extern "C" fn pm_presence_start(
+    udid: *const c_char,
+    transports: u32,
+) -> *mut PMPresence {
     if udid.is_null() {
         return std::ptr::null_mut();
     }
@@ -68,11 +102,12 @@ pub unsafe extern "C" fn pm_presence_start(udid: *const c_char) -> *mut PMPresen
         return std::ptr::null_mut();
     };
     let udid = udid.to_owned();
+    let allow_wifi = transports & crate::TRANSPORT_WIFI != 0;
     let (tx, rx) = mpsc::sync_channel(64);
     let (cancel, mut cancelled_rx) = watch::channel(false);
     let worker = thread::spawn(move || {
         let Ok(rt) = runtime() else {
-            let _ = tx.try_send(3);
+            let _ = tx.try_send(UNAVAILABLE);
             return;
         };
         rt.block_on(async {
@@ -80,7 +115,7 @@ pub unsafe extern "C" fn pm_presence_start(udid: *const c_char) -> *mut PMPresen
                 tokio::select! {
                     biased;
                     _ = cancelled(&mut cancelled_rx) => break,
-                    _ = observe(&udid, &tx) => { let _ = tx.try_send(3); }
+                    _ = observe(&udid, allow_wifi, &tx) => { let _ = tx.try_send(UNAVAILABLE); }
                 }
                 tokio::select! {
                     _ = cancelled(&mut cancelled_rx) => break,
@@ -95,7 +130,8 @@ pub unsafe extern "C" fn pm_presence_start(udid: *const c_char) -> *mut PMPresen
         worker: Some(worker),
     }))
 }
-/// Nonblocking; 0 = no event, 1 = USB attached, 2 = USB absent, 3 = monitor unavailable.
+/// Nonblocking; 0 = no event, 1 = on USB, 2 = absent, 3 = monitor unavailable,
+/// 4 = reachable over Wi-Fi only (reported only when Wi-Fi was allowed).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pm_presence_poll(handle: *mut PMPresence) -> i32 {
     let Some(handle) = (unsafe { handle.as_ref() }) else {
@@ -130,6 +166,28 @@ mod tests {
             udid: name.into(),
             connection_type,
         })
+    }
+    #[test]
+    fn wifi_counts_only_when_allowed_and_usb_takes_precedence() {
+        let wifi = || Connection::Network("192.0.2.1".parse().unwrap());
+        let mut state = PresenceState {
+            allow_wifi: true,
+            ..Default::default()
+        };
+        assert_eq!(state.apply("a", attach(5, "a", wifi())), Some(WIFI_ONLY));
+        assert_eq!(
+            state.apply("a", attach(6, "a", Connection::Usb)),
+            Some(ON_USB)
+        );
+        // Unplugging falls back to Wi-Fi rather than absent.
+        assert_eq!(
+            state.apply("a", UsbmuxdListenEvent::Disconnected(6)),
+            Some(WIFI_ONLY)
+        );
+        assert_eq!(
+            state.apply("a", UsbmuxdListenEvent::Disconnected(5)),
+            Some(ABSENT)
+        );
     }
     #[test]
     fn filters_other_devices_wifi_and_duplicate_initial_notifications() {
