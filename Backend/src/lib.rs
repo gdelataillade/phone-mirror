@@ -1,5 +1,5 @@
 //! Native USB/CoreDevice backend. The C boundary owns all allocations explicitly.
-//! No listening network ports, companion app, XCTest runner, or global stream stop.
+//! No listening network ports, companion app, XCTest runner, or stopping another client's stream.
 use idevice::core_device::display_stream::{
     hevc::{HevcAccessUnitAssembler, HevcDepacketizerEvent},
     negotiation::parse_screen_video_answer,
@@ -559,12 +559,64 @@ async fn run(
     .await;
     // Cleanup even when setup was cancelled after the audio half started.
     status(tx, "Closing session…");
-    let _ = tokio::time::timeout(
-        Duration::from_millis(300),
-        display.stop_owned_session(session_id),
+    drop(display);
+    let stop = tokio::time::timeout(
+        Duration::from_secs(2) * if wifi { WIFI_TIMEOUT_FACTOR } else { 1 },
+        stop_own_session(&mut adapter, &mut rsd, session_id),
     )
     .await;
+    if std::env::var_os("PM_TRACE").is_some() {
+        eprintln!("session stop: {stop:?}");
+    }
     result
+}
+
+/// Ends this app's screen session on the phone. Until then the phone keeps capturing, and
+/// keeps Camera and the microphone unavailable, for up to the session's 3600 s timeout.
+/// The phone accepts only a whole-server stop and holds one screen session at a time (a
+/// new start replaces the last), so stop only when every active session is still ours.
+/// Each request gets its own connection: see `DisplayServiceClient::stop_media_stream`.
+async fn stop_own_session(
+    adapter: &mut AdapterHandle,
+    rsd: &mut RsdHandshake,
+    session_id: uuid::Uuid,
+) -> Result<&'static str> {
+    let status = Display::connect_rsd(adapter, rsd)
+        .await
+        .map_err(|e| e.to_string())?
+        .get_media_stream_server_status()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !only_owned_sessions(&status, session_id) {
+        return Ok("not ours");
+    }
+    Display::connect_rsd(adapter, rsd)
+        .await
+        .map_err(|e| e.to_string())?
+        .stop_media_stream()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok("stopped")
+}
+
+/// True when the server status lists at least one session and all carry `session_id`.
+fn only_owned_sessions(status: &plist::Value, session_id: uuid::Uuid) -> bool {
+    let Some(sessions) = status
+        .as_dictionary()
+        .and_then(|d| d.get("sessions"))
+        .and_then(plist::Value::as_array)
+    else {
+        return false;
+    };
+    let owned = |session: &plist::Value| {
+        ["connection", "options", "avcMediaStreamOptionClientSessionID", "uuid"]
+            .iter()
+            .try_fold(session, |v, key| v.as_dictionary()?.get(*key))
+            .and_then(plist::Value::as_string)
+            .and_then(|id| uuid::Uuid::parse_str(id).ok())
+            == Some(session_id)
+    };
+    !sessions.is_empty() && sessions.iter().all(owned)
 }
 
 /// The phone's USB connection when it has one, otherwise its Wi-Fi one (usbmuxd lists a
@@ -1279,6 +1331,46 @@ mod transport_tests {
         assert!(preferred_connection(&wifi_only, "phone", false).is_none());
         let unknown = [device("phone", 4, Connection::Unknown("?".into()))];
         assert!(preferred_connection(&unknown, "phone", true).is_none());
+    }
+}
+
+#[cfg(test)]
+mod session_stop_tests {
+    use super::only_owned_sessions;
+    use plist::{Dictionary, Value};
+
+    // The shape of the phone's getmediastreamserverstatus reply, reduced to the ID path.
+    fn status(ids: &[&str]) -> Value {
+        let sessions = ids
+            .iter()
+            .map(|id| {
+                let mut uuid = Dictionary::new();
+                uuid.insert("uuid".into(), Value::String((*id).into()));
+                let mut options = Dictionary::new();
+                options.insert("avcMediaStreamOptionClientSessionID".into(), uuid.into());
+                let mut connection = Dictionary::new();
+                connection.insert("options".into(), options.into());
+                let mut session = Dictionary::new();
+                session.insert("connection".into(), connection.into());
+                Value::Dictionary(session)
+            })
+            .collect();
+        let mut root = Dictionary::new();
+        root.insert("sessions".into(), Value::Array(sessions));
+        Value::Dictionary(root)
+    }
+
+    #[test]
+    fn stops_only_when_every_active_stream_is_ours() {
+        let ours = uuid::Uuid::new_v4();
+        let other = uuid::Uuid::new_v4().to_string();
+        let id = ours.to_string();
+        assert!(only_owned_sessions(&status(&[&id, &id]), ours));
+        assert!(only_owned_sessions(&status(&[&id.to_uppercase()]), ours));
+        assert!(!only_owned_sessions(&status(&[&other, &other]), ours));
+        assert!(!only_owned_sessions(&status(&[&id, &other]), ours));
+        assert!(!only_owned_sessions(&status(&[]), ours));
+        assert!(!only_owned_sessions(&Value::Dictionary(Dictionary::new()), ours));
     }
 }
 
