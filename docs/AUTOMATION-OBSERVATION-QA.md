@@ -16,11 +16,9 @@ The results below supplement the automated evidence.
 
 ## Automated results (2026-10-13)
 
-- Swift: 77 tests passed in the full suite; 30 automation/diagnostics tests passed
-  again after the final response and retention changes.
-- Rust: 54 tests passed across library/media/opack; all 4 dispatch tests passed
-  after adding the queue-overflow and handle-lifetime regressions (2 additional
-  cases beyond that full run).
+- Final pre-PR run: all 78 Swift tests and all 56 Rust tests across
+  library/media/opack passed, including queue-overflow, dispatch-handle lifetime,
+  and encoded event-query regressions.
 - MCP: all 18 bridge/HTTP tests passed on the final bridge source.
 - Rust formatting, strict Swift formatting for changed files, and Git whitespace
   checks passed.
