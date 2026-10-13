@@ -65,16 +65,29 @@ public struct AutomationRequest {
     let target = first[1].split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
     var query: [String: String] = [:]
     if target.count == 2 {
-      // Plain name=value tokens only: no escaping to interpret, no repeated names.
+      // Names remain plain tokens. Event cursors and fractional timeouts need
+      // a small decoded value alphabet; all other routes retain plain values.
       func plain(_ text: Substring) -> Bool {
         !text.isEmpty && text.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }
       }
       for pair in target[1].split(separator: "&", omittingEmptySubsequences: false) {
         let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-        guard parts.count == 2, plain(parts[0]), plain(parts[1]),
-          query[String(parts[0])] == nil
-        else { throw AutomationFailure(400, "Invalid query string") }
-        query[String(parts[0])] = String(parts[1])
+        guard parts.count == 2, plain(parts[0]), query[String(parts[0])] == nil else {
+          throw AutomationFailure(400, "Invalid query string")
+        }
+        let value: String
+        if target[0] == "/v1/events" {
+          guard let decoded = String(parts[1]).removingPercentEncoding, !decoded.isEmpty,
+            decoded.allSatisfy({
+              $0.isASCII && ($0.isLetter || $0.isNumber || "_-:.".contains($0))
+            })
+          else { throw AutomationFailure(400, "Invalid query string") }
+          value = decoded
+        } else {
+          guard plain(parts[1]) else { throw AutomationFailure(400, "Invalid query string") }
+          value = String(parts[1])
+        }
+        query[String(parts[0])] = value
       }
     }
     return AutomationRequest(

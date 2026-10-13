@@ -98,6 +98,26 @@ final class AutomationObservationTests: XCTestCase {
     XCTAssertTrue(restarted.gap)
     XCTAssertEqual(restarted.events.count, 2)
   }
+  func testHTTPEventQueriesDecodeBridgeCursorsAndFractionalTimeouts() throws {
+    func request(_ query: String) throws -> AutomationRequest {
+      let parsed = try AutomationRequest.parse(
+        Data(
+          "GET /v1/events?\(query) HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n\r\n".utf8))
+      return try XCTUnwrap(parsed)
+    }
+    let cursor = UUID().uuidString + ":3"
+    for encoded in [cursor, cursor.replacingOccurrences(of: ":", with: "%3A")] {
+      let parsed = try request("afterCursor=\(encoded)&event=firstFrame&timeoutSeconds=0.1")
+      let query = try AutomationEventQuery(parsed.query)
+      XCTAssertEqual(query.afterCursor, cursor)
+      XCTAssertEqual(query.timeoutSeconds, 0.1)
+    }
+    for invalid in ["%", "%3", "%GG", "%253A", "%00", "%0D%0A", "%26", "a+b", ""] {
+      XCTAssertThrowsError(try request("afterCursor=\(invalid)"), invalid)
+    }
+    XCTAssertThrowsError(try request("afterCursor=\(cursor)&afterCursor=\(cursor)"))
+    XCTAssertThrowsError(try request("after%43ursor=\(cursor)"))
+  }
   func testEventQueriesRejectBadCursorsUnknownEventsAndUnboundedWaits() throws {
     let history = AutomationEvents()
     for query in [

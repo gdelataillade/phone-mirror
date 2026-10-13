@@ -11,7 +11,8 @@ Automated checks cover native marker ordering/failure/lifetime, guarded frame
 freshness, event precision/retention/cursor restart semantics, strict option
 validation, MCP routing, image content, and timeout responses without retries.
 These checks do not establish real-device dispatch timing or UI success.
-Device QA remains pending while physical-device testing is on hold.
+USB device QA resumed with the user's connected, unlocked iPhone on 2026-10-13.
+The results below supplement the automated evidence.
 
 ## Automated results (2026-10-13)
 
@@ -26,10 +27,50 @@ Device QA remains pending while physical-device testing is on hold.
 - `scripts/build.sh` produced an ad-hoc signed local app; `codesign --verify
   --deep --strict build/iPhoneMirror.app` passed. Existing macOS 27 recording API
   deprecation warnings remain.
-- No physical-device tests, installation, release publication, or MCP registration
-  changes were performed.
+- After device QA exposed escaped-cursor query rejection, 28 focused Swift tests
+  (including the new HTTP parser regression) and all 18 Python tests passed.
+  The rebuilt app passed strict signature verification.
+- No installation, release publication, or MCP registration changes were made.
 
-## Reproduce on a device when testing resumes
+## Physical-device results (2026-10-13)
+
+Tested the locally built app over USB with an unlocked iPhone 17 on iOS 27.
+Calls used this worktree's actual stdio MCP bridge, including initialization,
+tool routing, HTTP transport, and MCP image responses. The globally registered
+MCP tool schema was unchanged. Screenshots and raw receipts stayed in a private
+temporary directory and are not committed.
+
+| Check | Observed result |
+| --- | --- |
+| Tap, swipe, text, backspace, Home with observation | Dispatch receipts and separate image blocks returned; fresh frame receipt times exceeded monotonic dispatch confirmation. Settings navigation, scrolling, query entry/deletion and eventual Home were visually checked. |
+| Freshness versus UI completion | The first image sometimes showed an animation or paste permission; a later screenshot established the resulting UI. Fresh does not mean settled or successful. |
+| Idle observation timeout | A 0.1-second observation budget returned `dispatched` plus `timed_out`, without an image, in about 0.19 seconds including input dispatch. A 5-second budget also timed out correctly. No bridge retry occurred. |
+| Stop Agent Action | The visible menu interrupted a pending post-dispatch observation: `cancelled`, `timedOut: false`, no image. Status then reported `busy: false`; a subsequent Home action worked. |
+| Event history and reconnect | Ordered manualReconnect, closed, opening, transportChanged (USB), and firstFrame events included session IDs and precise host timestamps. One opening-to-firstFrame interval was 0.414 seconds. |
+| Event wait | A 0.1-second wait timed out in 0.112 seconds; an active 5-second wait returned firstFrame on reconnect after 4.035 seconds, before its deadline. |
+| Old session guard | A tap using the pre-reconnect session returned HTTP 409 before dispatch. |
+| App restart | Reading with the previous app generation's cursor returned `gap: true` and the new history. |
+| Access revocation | Disabling access ended a pending event wait with a transport error after 1.353 seconds. The window remained responsive. |
+| Lock semantics | Status and event responses consistently reported `lockState: unknown`. |
+
+Device QA found and fixed a real integration bug: the HTTP parser rejected the
+bridge's percent-encoded event cursor and fractional timeout. Event routes now
+decode a restricted value alphabet; malformed escapes, control characters,
+duplicate names, and encoded names remain rejected. Other routes retain their
+existing strict query rules. The regression covers the real encoded cursor.
+
+Cleanup: cleared the disposable Settings search, restored Home, disabled agent
+access, disconnected, and quit the test app. Phone settings and audio volume
+were not changed. The text test used the existing clipboard-based typing path,
+so the iPhone clipboard may still contain `Wi-Fi`.
+
+Not exercised physically: cable removal/Wi-Fi fallback, screen rotation,
+cancellation during the gesture itself, disconnect during an observation,
+native dispatch failure, and bounded-history eviction. Automated coverage is
+not a substitute for those hardware checks. No camera app or glasses-camera
+pipeline was tested; no lock/unlock detection is implemented.
+
+## Device reproduction and remaining checks
 
 1. Build this branch with `scripts/build.sh`. Stop any existing mirror session
    before opening this build. Enable **Automation → Enable Agent Access** and
