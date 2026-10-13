@@ -52,7 +52,8 @@ body limit 128 KiB. Errors have `{ "error": "..." }` and a non-200 HTTP status.
 | `GET /v1/status` | Connection/control readiness, sessionID, observationID, dimensions, decoded FPS, busy flag, capabilities and `transport` (`usb`, `wifi` or null) |
 | `GET /v1/screenshot` | Upright PNG as base64 `image`, mimeType, width/height, sessionID, observationID, frameID and ageSeconds |
 | `GET /v1/screenshot?format=png` | The same PNG as the raw response body; metadata in `X-iPhoneMirror-Width`, `-Height`, `-SessionID`, `-ObservationID`, `-FrameID` and `-AgeSeconds` headers |
-| `POST /v1/actions` | Validated input action; returns accepted and a sessionID when connected |
+| `POST /v1/actions` | Validated input action; returns acceptance, actionID and sessionID; optional `observeAfter` waits for native dispatch and a newer decoded frame |
+| `GET /v1/events` | Up to 256 timestamped connection events, cursor, gap and timeout status; optional `afterCursor`, `event`, `timeoutSeconds` |
 | `GET /v1/apps` | Installed apps (App Store, Apple and developer builds): name, bundleID, version, build, running, developer and apple. `?scope=developer` lists only builds installed from Xcode or other developer tools |
 | `POST /v1/apps/launch` | `{"bundleID": "…", "restart": false}` launches the app in the foreground and returns its `pid`; `restart: true` kills a running instance first |
 | `POST /v1/apps/terminate` | `{"bundleID": "…"}` force-quits the app's running processes and returns their `pids`; 409 when it is not running |
@@ -127,6 +128,93 @@ input during teardown. Already-queued one-shot commands cannot be undone.
 `accepted` means input was queued, **not that the UI reached the desired state**.
 The API does not silently retry commands after failures. Poll readiness and
 observe again before choosing what to do next.
+
+## Action plus observation
+
+All `/v1/actions` operations except `release` accept `observeAfter: true` and
+optional `observationTimeoutSeconds` (0.1–5, default 2; requires `observeAfter`).
+App launch/terminate use their existing separate endpoints and still require a
+separate screenshot. Existing action calls keep their behavior when the option
+is absent. Actions return a unique `actionID`, host Unix `queuedAt` timestamp,
+and `dispatchStatus`. The ID is a receipt, not an idempotency key or query handle.
+
+```json
+{"op":"tap","x":0.5,"y":0.4,"sessionID":"<observed session UUID>","observationID":"<observed geometry ID>","observeAfter":true,"observationTimeoutSeconds":2}
+```
+
+With observation enabled, the server inserts a FIFO marker after the native
+input sequence (including touch/key release). It waits at most 5 seconds for
+that marker. `dispatchStatus: "dispatched"` means the input transport operations
+finished, **not that iOS applied them or that the intended UI appeared**.
+`dispatchedAt` is host Unix seconds when the native marker was processed;
+`dispatchConfirmedAtMonotonicSeconds` is when the Mac app received confirmation.
+All clocks are on the Mac, not the iPhone or glasses.
+
+Only a frame with a newer ordinal and a decode timestamp strictly after that
+confirmation qualifies for the returned observation. Fresh observations include
+`status: "fresh"`, `timedOut: false`, the usual PNG/geometry/session metadata,
+`frameReceivedAt` (host Unix seconds), `frameReceivedAtMonotonicSeconds`, and
+`frameTimestampSource: "host_decode"`. These timestamp fields also appear on
+ordinary screenshots. Use monotonic timestamps for elapsed time; wall-clock
+adjustments do not affect deadlines. A freshly decoded frame may still contain
+buffered pre-action pixels and must be inspected.
+
+A static display may legitimately emit no newer frame. In that case the response
+retains the action receipt and `dispatchStatus: "dispatched"`, with
+`observation: {"status":"timed_out","timedOut":true}` and no image. Do not retry
+the action just because an observation timed out. `dispatchStatus: "failed"`
+means the input sequence failed/closed before its marker; partial input may
+already have been sent. `"unknown"` means dispatch could not be established
+(including cancellation, unavailable marker, or `dispatchTimedOut: true`).
+Observation can also report `cancelled`, `session_changed`, `unavailable`,
+`action_interrupted`, `dispatch_failed`, `dispatch_unavailable`, or `not_attempted`.
+
+One agent action owns input through its observation wait. Screen-changing app
+requests are refused during that period; input actions are also refused while
+launch/terminate runs. App listing remains independent. Stop Agent Action or
+Command–Escape invalidates the wait and requests input release. Disconnect,
+access revocation, and request cancellation still stop work; queued one-shot
+commands cannot be undone. Allow 25 seconds for combined calls, and always
+observe before retrying a transport failure that prevented a response.
+
+## Connection event history
+
+`GET /v1/status` adds `eventCursor`, `eventTypes`, and `lockState: "unknown"`.
+Use that cursor to start observing **future** transitions, or `GET /v1/events`
+to retrieve the currently retained history. History is independent of whether
+a mirror connection is active and spans USB/Wi-Fi reconnects while the app runs.
+It remains in memory only and is bounded to 256 entries.
+
+`GET /v1/events?afterCursor=<cursor>&event=firstFrame&timeoutSeconds=5`
+waits for matching entries after the cursor. `event` is optional. Timeout is
+0–5 seconds (default 0); a nonzero timeout requires `afterCursor`. Four event
+readers at most may run together; excess readers get 429. No polling request
+creates or changes a device connection.
+
+Each entry has `cursor`, `type`, `observedAt` (host Unix seconds),
+`monotonicSeconds` (host uptime), and optional connection `sessionID` and
+`transport`. Types are `opening`, `transportChanged`, `firstFrame`, `closed`,
+`usbRemoved`, `usbReturned`, `wifiOnly`, `wifiLost`, `usbMonitorUnavailable`,
+`videoStalled`, `startupTimeout`, `nativeFailure`, `manualReconnect`, `stopped`,
+`sleeping`, and `waking`. `firstFrame` marks the Mac app observing its first
+decoded picture in that connection, not an exact device-side frame timestamp.
+
+Responses include `events`, `nextCursor`, optional `oldestCursor`, `gap`,
+`timedOut`, and `lockState`. Advance to `nextCursor`, including when a filtered
+read returns no events. `gap: true` means the requested history was evicted or
+the cursor belongs to another app run; retained entries are returned for
+resynchronization. An initial read also reports a gap if older entries have
+already been evicted. Malformed or future cursors are rejected.
+
+**Screen lock is not detected.** Neither connection loss, a black image nor
+rotation lock becomes a screen-lock event. Timing reports are Mac observations;
+no events can establish what occurred on a phone while it was unreachable.
+
+The stdio bridge serves requests serially. Event waits are deliberately limited
+to 5 seconds; request cancellation notifications are not an immediate abort.
+The app's visible Stop and access-revocation controls remain authoritative.
+
+See [focused validation and device checks](AUTOMATION-OBSERVATION-QA.md).
 
 ## Current boundaries
 

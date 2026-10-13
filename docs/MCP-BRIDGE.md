@@ -61,7 +61,9 @@ shape, substituting their actual absolute paths:
 
 | Tool | Arguments / result |
 | --- | --- |
-| `iphone_status` | Connection, readiness and frame status. |
+| `iphone_status` | Connection, readiness, frame status, event cursor/types and unknown lock state. |
+| `iphone_events` | Retained connection history; optional `afterCursor` and `event` filter. |
+| `iphone_wait_for_event` | Required `afterCursor`; optional `event` and `timeoutSeconds` (0.1–5, default 5). |
 | `iphone_screenshot` | Actual MCP PNG image content plus dimensions, `sessionID`, `observationID`, `frameID` and `ageSeconds`. |
 | `iphone_tap` | `x`, `y`; optional `duration` for a long press (default 0.06 seconds). |
 | `iphone_swipe` | `x`, `y`, `toX`, `toY`; optional `duration` (default 0.35 seconds). |
@@ -86,6 +88,20 @@ with `(0, 0)` at its top-left. For a screenshot of size `width × height`, use
 `x = pixelX / width`, `y = pixelY / height`. The PNG's longest edge is limited to
 1280 pixels; use its returned dimensions, not the physical phone resolution.
 
+Input action tools except `iphone_release` accept `observeAfter: true` and
+`observationTimeoutSeconds` (0.1–5, default 2). The result contains the action
+receipt/dispatch status plus a separate MCP PNG image block when a newer frame
+is available. An observation timeout is a successful tool response carrying
+explicit timeout metadata, not proof that input failed. Launch and terminate
+retain their separate screenshot workflow. Combined input/observation calls
+allow 25 seconds; other timeout defaults are unchanged.
+
+For timing tests, capture `eventCursor` from status before the test, then use
+`iphone_wait_for_event` or `iphone_events`. Compute intervals using event
+`monotonicSeconds`, check `gap`, and advance `nextCursor`. The server records
+connection events while the agent is not making calls. Screen lock state remains
+unknown. The bridge is serial; an event wait occupies it for at most 5 seconds.
+
 Tap/swipe durations must be between 0.03 and 2 seconds. Text is limited to 16,000
 characters by the bridge and must contain valid Unicode without NUL characters.
 
@@ -94,7 +110,7 @@ Suggested agent workflow:
 1. Read status and screenshot; check that the phone is ready and the frame is
    suitable for the next action.
 2. Perform one action or a short sequence whose results do not depend on unseen UI.
-3. Take another screenshot and verify the expected state before continuing.
+3. Inspect the returned fresh observation, or take another screenshot, and verify the expected state before continuing.
 
 `accepted: true` means the app queued the input. It does not establish that a tap
 hit the expected control, text was entered, an app opened, or a test passed.

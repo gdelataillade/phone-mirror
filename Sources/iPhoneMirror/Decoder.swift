@@ -8,6 +8,7 @@ import VideoToolbox
 struct VideoFrame: @unchecked Sendable {
   let pixelBuffer: CVPixelBuffer
   let size: CGSize
+  let receivedAtUnixSeconds: TimeInterval
   let receivedAt: TimeInterval
   let ordinal: UInt64
   let orientation: UInt32
@@ -23,7 +24,8 @@ final class FrameMailbox: @unchecked Sendable {
     defer { lock.unlock() }
     count &+= 1
     frame = VideoFrame(
-      pixelBuffer: pixelBuffer, size: size, receivedAt: ProcessInfo.processInfo.systemUptime,
+      pixelBuffer: pixelBuffer, size: size, receivedAtUnixSeconds: Date().timeIntervalSince1970,
+      receivedAt: ProcessInfo.processInfo.systemUptime,
       ordinal: count, orientation: orientation)
   }
   func latest() -> VideoFrame? {
