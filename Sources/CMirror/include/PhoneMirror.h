@@ -58,6 +58,13 @@ PMAppCall *pm_app_start(PMHandle *handle, const char *request);
 // Blocks up to timeout_ms (max 30000) and frees call. Returns JSON
 // {"status":200,"result":{...}} or {"status":N,"error":"..."}; free with pm_string_free.
 char *pm_app_wait(PMAppCall *call, uint32_t timeout_ms);
+// FIFO marker after previously queued input. Independent allocation; does not borrow
+// the session handle. Poll until terminal, then free. Never proves device/UI success.
+typedef struct PMDispatchCall PMDispatchCall;
+PMDispatchCall *pm_dispatch_start(PMHandle *handle);
+// 0 pending, 1 dispatched (host Unix seconds), -1 input failed/session closed.
+int32_t pm_dispatch_poll(PMDispatchCall *call, double *timestamp);
+void pm_dispatch_free(PMDispatchCall *call);
 void pm_cancel(PMHandle *handle);
 // No other call may use handle once close starts. Joins all work; may block.
 void pm_close(PMHandle *handle);

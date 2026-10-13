@@ -244,6 +244,12 @@ final class NativeSession: @unchecked Sendable {
     guard !cancelled, let handle else { return false }
     return pm_command(handle, kind, a, b) == 1
   }
+  func startDispatch() -> InputDispatch? {
+    lock.lock()
+    defer { lock.unlock() }
+    guard !cancelled, let handle, let call = pm_dispatch_start(handle) else { return nil }
+    return InputDispatch(call)
+  }
   func cancel() {
     lock.lock()
     cancelled = true
@@ -357,5 +363,17 @@ final class NativeSession: @unchecked Sendable {
         ?? DeviceList(devices: [], error: "Invalid response from USB discovery.")
       completion(result)
     }
+  }
+}
+
+/// Only used on the calling actor; the native receiver outlives the session safely.
+final class InputDispatch {
+  private let pointer: OpaquePointer
+  init(_ pointer: OpaquePointer) { self.pointer = pointer }
+  deinit { pm_dispatch_free(pointer) }
+  func poll() -> (status: Int32, timestamp: Double) {
+    var timestamp = 0.0
+    let status = pm_dispatch_poll(pointer, &timestamp)
+    return (status, timestamp)
   }
 }

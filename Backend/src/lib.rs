@@ -21,6 +21,8 @@ use std::{
 };
 use tokio::sync::{mpsc as async_mpsc, watch};
 mod apps;
+mod dispatch;
+pub use dispatch::*;
 mod health;
 mod orientation;
 pub mod prepare;
@@ -122,6 +124,7 @@ pub struct PMHandle {
     worker: Option<thread::JoinHandle<()>>,
 }
 enum Command {
+    Dispatch(mpsc::SyncSender<f64>),
     Input(u32, u32, u32),
     Paste(String),
     // The UTI to set it under: UTI_PNG or UTI_JPEG, chosen by the caller.
@@ -1024,6 +1027,10 @@ async fn input_loop(
         } * timeout_factor;
         let operation = async {
             let (kind, a, b) = match cmd {
+                Command::Dispatch(reply) => {
+                    dispatch::complete(reply);
+                    return Ok(());
+                }
                 Command::Input(kind, a, b) => (kind, a, b),
                 Command::Paste(text) => {
                     release(&mut hid, &mut indigo, surface, &mut touch, &mut keys).await;

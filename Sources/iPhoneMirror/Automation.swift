@@ -78,6 +78,9 @@ extension MirrorModel {
     if request.method == "GET", request.path == "/v1/apps" {
       return .json(try await appRequest(AppRequest(listQuery: request.query)))
     }
+    if request.method == "GET", request.path == "/v1/events" {
+      return .json(try await agentEvents(AutomationEventQuery(request.query)))
+    }
     try request.requireQuery(allowing: [])
     if request.method == "POST", request.path.hasPrefix("/v1/apps/") {
       return .json(try await appRequest(AppRequest(path: request.path, body: request.body)))
@@ -99,7 +102,11 @@ extension MirrorModel {
       throw AutomationFailure(409, "Connect and unlock an iPhone; wait for stable video")
     }
     automationAppRequest = true
-    defer { automationAppRequest = false }
+    automationAppMutation = app.changesScreen
+    defer {
+      automationAppRequest = false
+      automationAppMutation = false
+    }
     let (status, result) = await native.app(app.nativeJSON)
     guard status == 200 else {
       throw AutomationFailure(status, result["error"] as? String ?? "App request failed")
@@ -115,6 +122,8 @@ extension MirrorModel {
   private func automationJSON(_ request: AutomationRequest) async throws -> [String: Any] {
     if request.method == "GET", request.path == "/v1/status" {
       return [
+        "eventCursor": automationEvents.cursor, "lockState": "unknown",
+        "eventTypes": ConnectionDiagnostics.Event.allCases.map(\.code),
         "apiVersion": 1, "connected": connected, "canControl": canControl,
         "sessionID": sessionID?.uuidString as Any? ?? NSNull(),
         "observationID": sessionID.flatMap { id in
@@ -126,7 +135,7 @@ extension MirrorModel {
         "capabilities": [
           "screenshot", "tap", "swipe", "type", "key", "home", "button",
           "app_switcher", "spotlight", "control_center", "rotate", "release",
-          "apps", "launch_app", "terminate_app",
+          "apps", "launch_app", "terminate_app", "observe_after", "events",
         ],
       ]
     }
@@ -145,7 +154,9 @@ extension MirrorModel {
           "Active gesture cancelled; input release requested (session closes if its input queue is full)",
       ]
     }
-    guard !automationBusy else { throw AutomationFailure(409, "Another agent action is running") }
+    guard !automationBusy, !automationAppMutation else {
+      throw AutomationFailure(409, "Another agent action or app request is running")
+    }
     guard canControl, let native = session, let id = sessionID, let frame = native.mailbox.latest(),
       let orientation = DisplayOrientation(rawValue: frame.orientation),
       ScreenPresentation(encoded: frame.size, rawOrientation: frame.orientation) != nil
@@ -153,6 +164,8 @@ extension MirrorModel {
     if let expected = action.observationID, expected != observationID(id, frame) {
       throw AutomationFailure(409, "Screen orientation or session changed; take another screenshot")
     }
+    let actionID = UUID().uuidString
+    let queuedAt = Date().timeIntervalSince1970
     releaseInputs()
     let epoch = inputEpoch
     automationBusy = true
@@ -171,37 +184,61 @@ extension MirrorModel {
       try validate()
       guard native.send(kind) else { throw AutomationFailure(409, "Input queue unavailable") }
     }
-    switch action.operation {
-    case .tap, .swipe, .key:
-      try await AutomationGesture.perform(
-        action, orientation: orientation, validate: validate,
-        send: { native.send($0, $1, $2) })
-    case .type:
-      try validate()
-      guard native.paste(action.text) else {
-        throw AutomationFailure(409, "Paste could not be queued")
-      }
-    case .home: try send(5)
-    case .button:
-      if let id = action.button.nativeID {
+    do {
+      switch action.operation {
+      case .tap, .swipe, .key:
+        try await AutomationGesture.perform(
+          action, orientation: orientation, validate: validate,
+          send: { native.send($0, $1, $2) })
+      case .type:
         try validate()
-        guard native.send(13, id) else { throw AutomationFailure(409, "Input queue unavailable") }
-      } else {
-        try send(5)
+        guard native.paste(action.text) else {
+          throw AutomationFailure(409, "Paste could not be queued")
+        }
+      case .home: try send(5)
+      case .button:
+        if let id = action.button.nativeID {
+          try validate()
+          guard native.send(13, id) else { throw AutomationFailure(409, "Input queue unavailable") }
+        } else {
+          try send(5)
+        }
+      case .appSwitcher: try send(8)
+      case .spotlight: try send(11)
+      case .controlCenter: try send(12)
+      case .rotate:
+        try validate()
+        rotate(clockwise: action.clockwise)
+        guard rotation.isPending else {
+          throw AutomationFailure(409, "Rotation could not be queued")
+        }
+      case .release: break
       }
-    case .appSwitcher: try send(8)
-    case .spotlight: try send(11)
-    case .controlCenter: try send(12)
-    case .rotate:
-      try validate()
-      rotate(clockwise: action.clockwise)
-      guard rotation.isPending else { throw AutomationFailure(409, "Rotation could not be queued") }
-    case .release: break
+    } catch let error as AutomationFailure {
+      guard action.observeAfter else { throw error }
+      // A gesture may have emitted some input before interruption. Preserve the
+      // receipt so clients cannot mistake this for an action safe to replay.
+      return [
+        "accepted": true, "actionID": actionID, "sessionID": id.uuidString,
+        "queuedAt": queuedAt, "dispatchStatus": "unknown",
+        "observation": ["status": "action_interrupted", "timedOut": false],
+        "note": "Input may have been partially dispatched; observe before retrying.",
+        "reason": error.message,
+      ]
     }
-    return [
-      "accepted": true, "sessionID": id.uuidString,
-      "note": "Input queued. Take another screenshot to verify the result on the phone.",
+    var response: [String: Any] = [
+      "accepted": true, "actionID": actionID, "sessionID": id.uuidString,
+      "queuedAt": queuedAt, "dispatchStatus": "queued",
+      "note":
+        "Input queued; verify the resulting UI. Never retry solely because observation timed out.",
     ]
+    if action.observeAfter {
+      let result = try await observeAction(
+        native: native, id: id, epoch: inputEpoch, startingFrame: frame.ordinal,
+        timeout: action.observationTimeoutSeconds)
+      response.merge(result) { _, new in new }
+    }
+    return response
   }
 
   private func agentScreenshot(_ options: ScreenshotOptions) async throws
@@ -241,12 +278,128 @@ extension MirrorModel {
     guard let (data, width, height) = result else {
       throw AutomationFailure(500, "Could not encode the frame")
     }
-    return (data, [
-      "width": width, "height": height,
-      "sessionID": id.uuidString, "frameID": String(frame.ordinal),
-      "observationID": observationID(id, frame),
-      "ageSeconds": ProcessInfo.processInfo.systemUptime - frame.receivedAt,
-      "coordinates": "Normalized 0...1; origin at top left of this upright image",
-    ])
+    return (
+      data,
+      [
+        "width": width, "height": height,
+        "sessionID": id.uuidString, "frameID": String(frame.ordinal),
+        "observationID": observationID(id, frame),
+        "frameReceivedAt": frame.receivedAtUnixSeconds,
+        "frameReceivedAtMonotonicSeconds": frame.receivedAt,
+        "frameTimestampSource": "host_decode",
+        "ageSeconds": ProcessInfo.processInfo.systemUptime - frame.receivedAt,
+        "coordinates": "Normalized 0...1; origin at top left of this upright image",
+      ]
+    )
+  }
+}
+
+extension MirrorModel {
+  private func agentEvents(_ query: AutomationEventQuery) async throws -> [String: Any] {
+    guard automationEventWaiters < 4 else { throw AutomationFailure(429, "Too many event readers") }
+    automationEventWaiters += 1
+    defer { automationEventWaiters -= 1 }
+    let deadline = ProcessInfo.processInfo.systemUptime + query.timeoutSeconds
+    while true {
+      try Task.checkCancellation()
+      guard automationEnabled else { throw AutomationFailure(503, "Agent access off") }
+      let page = try automationEvents.read(after: query.afterCursor, matching: query.event)
+      let timedOut = ProcessInfo.processInfo.systemUptime >= deadline
+      if !page.events.isEmpty || page.gap || timedOut {
+        let data = try JSONEncoder().encode(page)
+        var result = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        result["timedOut"] =
+          query.timeoutSeconds > 0 && timedOut && page.events.isEmpty && !page.gap
+        return result
+      }
+      try await Task.sleep(nanoseconds: 25_000_000)
+    }
+  }
+
+  private func observeAction(
+    native: NativeSession, id: UUID, epoch: UInt64, startingFrame: UInt64, timeout: Double
+  ) async throws -> [String: Any] {
+    func observation(_ status: String) -> [String: Any] {
+      ["status": status, "timedOut": status == "timed_out"]
+    }
+    guard let dispatch = native.startDispatch() else {
+      return ["dispatchStatus": "unknown", "observation": observation("dispatch_unavailable")]
+    }
+    let dispatchDeadline = ProcessInfo.processInfo.systemUptime + 5
+    var dispatchedAt: Double = 0
+    while true {
+      try Task.checkCancellation()
+      guard automationEnabled, sessionID == id, inputEpoch == epoch else {
+        return [
+          "dispatchStatus": "unknown",
+          "observation": observation(
+            sessionID == id ? "cancelled" : "session_changed"),
+        ]
+      }
+      let result = dispatch.poll()
+      if result.status == 1 {
+        dispatchedAt = result.timestamp
+        break
+      }
+      if result.status < 0 {
+        return ["dispatchStatus": "failed", "observation": observation("dispatch_failed")]
+      }
+      if ProcessInfo.processInfo.systemUptime >= dispatchDeadline {
+        return [
+          "dispatchStatus": "unknown", "dispatchTimedOut": true,
+          "observation": observation("not_attempted"),
+        ]
+      }
+      try await Task.sleep(nanoseconds: 10_000_000)
+    }
+    // This conservative fence starts when Swift receives the marker, not when input
+    // was enqueued. It excludes frames decoded while the native queue was draining.
+    let confirmedAt = ProcessInfo.processInfo.systemUptime
+    let gate = AutomationObservationGate(
+      sessionID: id, inputEpoch: epoch, frameID: startingFrame, confirmedAt: confirmedAt)
+    var response: [String: Any] = [
+      "dispatchStatus": "dispatched", "dispatchedAt": dispatchedAt,
+      "dispatchConfirmedAtMonotonicSeconds": confirmedAt,
+      "dispatchTimedOut": false,
+    ]
+    let deadline = confirmedAt + timeout
+    while true {
+      try Task.checkCancellation()
+      let frame = native.mailbox.latest()
+      let state = gate.status(
+        sessionID: sessionID, inputEpoch: inputEpoch, canCapture: canControl,
+        frameID: frame?.ordinal, receivedAt: frame?.receivedAt)
+      if !automationEnabled || state == "cancelled" || state == "session_changed" {
+        response["observation"] = observation(state == "session_changed" ? state : "cancelled")
+        return response
+      }
+      if state == "fresh" {
+        do {
+          let shot = try await agentScreenshot(ScreenshotOptions(query: [:]))
+          guard automationEnabled, sessionID == id, inputEpoch == epoch else {
+            response["observation"] = observation(sessionID == id ? "cancelled" : "session_changed")
+            return response
+          }
+          var result = shot.metadata
+          result["status"] = "fresh"
+          result["timedOut"] = false
+          result["image"] = shot.png.base64EncodedString()
+          result["mimeType"] = "image/png"
+          response["observation"] = result
+        } catch is CancellationError { throw CancellationError() } catch let error
+          as AutomationFailure
+        {
+          response["observation"] = [
+            "status": "unavailable", "timedOut": false, "reason": error.message,
+          ]
+        }
+        return response
+      }
+      if ProcessInfo.processInfo.systemUptime >= deadline {
+        response["observation"] = observation("timed_out")
+        return response
+      }
+      try await Task.sleep(nanoseconds: 10_000_000)
+    }
   }
 }

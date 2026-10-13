@@ -89,7 +89,8 @@ public struct SessionHealth: Equatable, Sendable {
 }
 
 public struct ConnectionDiagnostics {
-  public enum Event: String {
+  public enum Event: String, CaseIterable {
+    case transportChanged = "Transport selected"
     case opening = "Opening connection"
     case firstFrame = "First decoded picture"
     case usbRemoved = "USB removed"
@@ -105,7 +106,28 @@ public struct ConnectionDiagnostics {
     case sleeping = "Mac sleeping"
     case waking = "Mac woke"
     case closed = "Session closed"
+    public var code: String {
+      switch self {
+      case .transportChanged: return "transportChanged"
+      case .opening: return "opening"
+      case .firstFrame: return "firstFrame"
+      case .usbRemoved: return "usbRemoved"
+      case .usbReturned: return "usbReturned"
+      case .wifiOnly: return "wifiOnly"
+      case .wifiLost: return "wifiLost"
+      case .usbMonitorUnavailable: return "usbMonitorUnavailable"
+      case .videoStalled: return "videoStalled"
+      case .startupTimeout: return "startupTimeout"
+      case .nativeFailure: return "nativeFailure"
+      case .manualReconnect: return "manualReconnect"
+      case .stopped: return "stopped"
+      case .sleeping: return "sleeping"
+      case .waking: return "waking"
+      case .closed: return "closed"
+      }
+    }
   }
+
   private struct Entry {
     let seconds: Int
     let event: Event

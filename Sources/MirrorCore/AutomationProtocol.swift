@@ -65,16 +65,29 @@ public struct AutomationRequest {
     let target = first[1].split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
     var query: [String: String] = [:]
     if target.count == 2 {
-      // Plain name=value tokens only: no escaping to interpret, no repeated names.
+      // Names remain plain tokens. Event cursors and fractional timeouts need
+      // a small decoded value alphabet; all other routes retain plain values.
       func plain(_ text: Substring) -> Bool {
         !text.isEmpty && text.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }
       }
       for pair in target[1].split(separator: "&", omittingEmptySubsequences: false) {
         let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-        guard parts.count == 2, plain(parts[0]), plain(parts[1]),
-          query[String(parts[0])] == nil
-        else { throw AutomationFailure(400, "Invalid query string") }
-        query[String(parts[0])] = String(parts[1])
+        guard parts.count == 2, plain(parts[0]), query[String(parts[0])] == nil else {
+          throw AutomationFailure(400, "Invalid query string")
+        }
+        let value: String
+        if target[0] == "/v1/events" {
+          guard let decoded = String(parts[1]).removingPercentEncoding, !decoded.isEmpty,
+            decoded.allSatisfy({
+              $0.isASCII && ($0.isLetter || $0.isNumber || "_-:.".contains($0))
+            })
+          else { throw AutomationFailure(400, "Invalid query string") }
+          value = decoded
+        } else {
+          guard plain(parts[1]) else { throw AutomationFailure(400, "Invalid query string") }
+          value = String(parts[1])
+        }
+        query[String(parts[0])] = value
       }
     }
     return AutomationRequest(
@@ -150,8 +163,7 @@ public enum AutomationResponseHead {
       "HTTP/1.1 \(status) \(status == 200 ? "OK" : "Error")\r\nContent-Type: \(contentType)\r\nContent-Length: \(length)\r\nCache-Control: no-store\r\nConnection: close\r\n"
     // Scalars, not Characters: Swift treats "\r\n" as one Character equal to neither.
     for (name, value) in extra
-    where value.unicodeScalars.allSatisfy({ $0.isASCII && $0.value >= 0x20 && $0.value != 0x7F })
-    {
+    where value.unicodeScalars.allSatisfy({ $0.isASCII && $0.value >= 0x20 && $0.value != 0x7F }) {
       head += "\(name): \(value)\r\n"
     }
     return Data((head + "\r\n").utf8)
@@ -197,6 +209,8 @@ public struct AutomationAction {
     case controlCenter = "control_center"
     case rotate, release
   }
+  public let observeAfter: Bool
+  public let observationTimeoutSeconds: Double
   public let operation: Operation
   public let sessionID: String?
   public let observationID: String?
@@ -215,7 +229,9 @@ public struct AutomationAction {
       let op = json["op"] as? String, let operation = Operation(rawValue: op)
     else { throw AutomationFailure("Expected an action object with a known op") }
     self.operation = operation
-    var fields: Set<String> = ["op", "sessionID", "observationID"]
+    var fields: Set<String> = [
+      "op", "sessionID", "observationID", "observeAfter", "observationTimeoutSeconds",
+    ]
     switch operation {
     case .tap: fields.formUnion(["x", "y", "duration"])
     case .swipe: fields.formUnion(["x", "y", "toX", "toY", "duration"])
@@ -252,6 +268,21 @@ public struct AutomationAction {
         value.doubleValue.isFinite, range.contains(value.doubleValue)
       else { throw AutomationFailure("\(name) must be a number in \(range)") }
       return value.doubleValue
+    }
+    if let supplied = json["observeAfter"] {
+      guard let value = supplied as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else {
+        throw AutomationFailure("observeAfter must be a boolean")
+      }
+      observeAfter = value.boolValue
+    } else {
+      observeAfter = false
+    }
+    observationTimeoutSeconds = try number("observationTimeoutSeconds", fallback: 2, range: 0.1...5)
+    guard json["observationTimeoutSeconds"] == nil || observeAfter else {
+      throw AutomationFailure("observationTimeoutSeconds requires observeAfter")
+    }
+    guard operation != .release || !observeAfter else {
+      throw AutomationFailure("release does not support observeAfter")
     }
     x = try number("x", fallback: operation == .tap || operation == .swipe ? nil : 0, range: 0...1)
     y = try number("y", fallback: operation == .tap || operation == .swipe ? nil : 0, range: 0...1)
@@ -381,10 +412,12 @@ public struct AppRequest: Equatable {
     switch kind {
     case .list(let developerOnly):
       object = ["op": "list", "scope": developerOnly ? "developer" : "all"]
-    case .launch(let id, let restart): object = ["op": "launch", "bundleID": id, "restart": restart]
+    case .launch(let id, let restart):
+      object = ["op": "launch", "bundleID": id, "restart": restart]
     case .terminate(let id): object = ["op": "terminate", "bundleID": id]
     }
-    let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
+    let data =
+      (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
     return String(decoding: data, as: UTF8.self)
   }
 }

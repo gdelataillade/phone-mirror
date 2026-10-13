@@ -74,7 +74,7 @@ class ProtocolTests(unittest.TestCase):
     def test_catalog_and_all_action_mappings(self):
         initialize(self.server)
         catalog = self.server.handle(request("tools/list"))["result"]["tools"]
-        self.assertEqual(len(catalog), 16)
+        self.assertEqual(len(catalog), 18)
         for definition in catalog:
             self.assertFalse(definition["inputSchema"]["additionalProperties"])
         arguments = {
@@ -146,6 +146,49 @@ class ProtocolTests(unittest.TestCase):
             with self.subTest(name=name, arguments=str(args)[:100]):
                 self.assertTrue(self.call(name, args)["result"]["isError"])
         self.assertEqual(self.api.calls, [])
+
+    def test_action_observation_is_one_request_and_preserves_dispatch_metadata(self):
+        initialize(self.server)
+        screenshot = self.api.request("GET", "/v1/screenshot")
+        result = {"accepted": True, "actionID": "action-1", "dispatchStatus": "dispatched",
+                  "observation": {**screenshot, "status": "fresh", "timedOut": False}}
+        with patch.object(self.api, "request", return_value=result) as api:
+            reply = self.call("iphone_tap", {"x": 0.5, "y": 0.5, "observeAfter": True})["result"]
+            api.assert_called_once_with("POST", "/v1/actions",
+                                        {"op": "tap", "x": 0.5, "y": 0.5, "observeAfter": True}, timeout=25)
+        metadata, image = reply["content"]
+        decoded = json.loads(metadata["text"])
+        self.assertEqual(decoded["actionID"], "action-1")
+        self.assertEqual(decoded["dispatchStatus"], "dispatched")
+        self.assertNotIn("image", decoded["observation"])
+        self.assertEqual(image["data"], PNG)
+
+    def test_observation_timeout_does_not_turn_dispatched_action_into_error_or_retry(self):
+        initialize(self.server)
+        result = {"accepted": True, "actionID": "action-2", "dispatchStatus": "dispatched",
+                  "observation": {"status": "timed_out", "timedOut": True}}
+        with patch.object(self.api, "request", return_value=result) as api:
+            reply = self.call("iphone_home", {"observeAfter": True})["result"]
+            self.assertEqual(api.call_count, 1)
+        self.assertFalse(reply["isError"])
+        self.assertEqual(json.loads(reply["content"][0]["text"]), result)
+        for args in ({"observeAfter": 1}, {"observationTimeoutSeconds": 2},
+                     {"observeAfter": True, "observationTimeoutSeconds": 6}):
+            self.assertTrue(self.call("iphone_home", args)["result"]["isError"])
+        self.assertTrue(self.call("iphone_release", {"observeAfter": True})["result"]["isError"])
+
+    def test_event_history_and_bounded_wait_routes(self):
+        initialize(self.server)
+        self.call("iphone_events")
+        self.assertEqual(self.api.calls[-1], ("GET", "/v1/events", None))
+        self.call("iphone_wait_for_event", {"afterCursor": "generation:7", "event": "firstFrame"})
+        self.assertEqual(self.api.calls[-1], (
+            "GET", "/v1/events?afterCursor=generation%3A7&event=firstFrame&timeoutSeconds=5", None))
+        count = len(self.api.calls)
+        for args in ({}, {"afterCursor": "x", "timeoutSeconds": 30},
+                     {"afterCursor": "x", "timeoutSeconds": True}):
+            self.assertTrue(self.call("iphone_wait_for_event", args)["result"]["isError"])
+        self.assertEqual(len(self.api.calls), count)
 
     def test_screenshot_is_image_with_separate_metadata(self):
         initialize(self.server)

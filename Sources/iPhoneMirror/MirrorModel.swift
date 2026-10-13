@@ -49,8 +49,11 @@ import SwiftUI
   {
     didSet { UserDefaults.standard.set(automationPort, forKey: "automationPort") }
   }
+  var automationEvents = AutomationEvents()
+  var automationEventWaiters = 0
   var automationCapturing = false
   var automationAppRequest = false
+  var automationAppMutation = false
   var automationServer: AutomationServer?
   // Defaults to muted: audio only starts once someone explicitly opts in.
   @Published var audioMuted: Bool =
@@ -101,7 +104,11 @@ import SwiftUI
       iOSVersion: selected?.version ?? "")
   }
   private func record(_ event: ConnectionDiagnostics.Event, health: SessionHealth? = nil) {
-    diagnostics.record(event, now: ProcessInfo.processInfo.systemUptime, health: health)
+    let now = ProcessInfo.processInfo.systemUptime
+    diagnostics.record(event, now: now, health: health)
+    automationEvents.record(
+      event.code, observedAt: Date().timeIntervalSince1970, monotonicSeconds: now,
+      sessionID: sessionID?.uuidString, transport: transport?.rawValue)
   }
   var sessionID: UUID? { lifecycle.attempt?.id }
   var active: Bool { lifecycle.active }
@@ -239,6 +246,7 @@ import SwiftUI
       if connecting { status = message }
     case 8:
       transport = PhoneTransport(rawValue: message)
+      record(.transportChanged)
       // The cable may have been plugged in while this Wi-Fi attempt was starting.
       usbAvailableOnWiFi = transport == .wifi && lastReach == 1
     case 3:
