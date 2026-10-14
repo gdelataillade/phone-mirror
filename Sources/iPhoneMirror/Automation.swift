@@ -4,12 +4,25 @@ import MirrorCore
 
 extension MirrorModel {
   func setAutomationEnabled(_ enabled: Bool) {
+    automationAccessRequested = enabled
+    UserDefaults.standard.set(enabled, forKey: "automationAccessRequested")
+    restartAutomationAccess()
+  }
+
+  /// Shutdown cancels work and revokes the token without changing the saved choice.
+  func stopAutomationAccess() {
     stopAgentAction()
     automationServer?.stop()
     automationServer = nil
-    automationEnabled = enabled
-    automationStatus = enabled ? "Starting agent access…" : "Agent access off"
-    guard enabled else { return }
+    automationEnabled = false
+    automationStatus = "Agent access off"
+  }
+
+  func restartAutomationAccess() {
+    stopAutomationAccess()
+    guard automationAccessRequested else { return }
+    automationEnabled = true
+    automationStatus = "Starting agent access…"
     let server = AutomationServer(port: UInt16(automationPort)) { [weak self] request in
       guard let self, self.automationEnabled else {
         throw AutomationFailure(503, "Agent access off")
@@ -33,7 +46,7 @@ extension MirrorModel {
   func setAutomationPort(_ port: Int) {
     guard port != automationPort else { return }
     automationPort = port
-    if automationEnabled { setAutomationEnabled(true) }
+    if automationAccessRequested { restartAutomationAccess() }
   }
 
   func chooseCustomAutomationPort() {

@@ -40,6 +40,9 @@ import SwiftUI
   @Published var screenshotBusy = false
   @Published var screenshotNotice: String?
   @Published var screenshotError: String?
+  // User intent survives shutdown and listener failures; runtime readiness does not.
+  @Published var automationAccessRequested =
+    UserDefaults.standard.bool(forKey: "automationAccessRequested")
   @Published var automationEnabled = false
   @Published var automationBusy = false
   @Published var automationStatus = "Agent access off"
@@ -156,6 +159,7 @@ import SwiftUI
       ) { [weak self] _ in
         Task { @MainActor in self?.wake() }
       })
+    restartAutomationAccess()
   }
   func refresh() {
     guard !discovering, !active else { return }

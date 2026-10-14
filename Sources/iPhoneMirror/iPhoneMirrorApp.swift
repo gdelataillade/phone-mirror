@@ -100,7 +100,7 @@ import SwiftUI
       }
       CommandMenu("Automation") {
         Toggle("Enable Agent Access", isOn: Binding(
-          get: { model.automationEnabled }, set: { model.setAutomationEnabled($0) }))
+          get: { model.automationAccessRequested }, set: { model.setAutomationEnabled($0) }))
         Text(model.automationStatus)
         Menu("Port") {
           Toggle("Automatic", isOn: Binding(
@@ -125,7 +125,7 @@ import SwiftUI
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     guard let model else { return .terminateNow }
-    model.setAutomationEnabled(false)
+    model.stopAutomationAccess()
     DispatchQueue.main.async {
       model.recording.stop {
         guard model.session != nil else {
