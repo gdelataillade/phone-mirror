@@ -8,7 +8,7 @@ enum AutomationResponse {
   case binary(Data, contentType: String, headers: [(String, String)])
 }
 
-/// Loopback only, opt-in for this launch, and authenticated even for screenshots.
+/// Loopback only, explicitly opted in, and authenticated even for screenshots.
 @MainActor final class AutomationServer {
   typealias Handler = (AutomationRequest) async throws -> AutomationResponse
   static var discoveryURL: URL {

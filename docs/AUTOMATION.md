@@ -4,7 +4,10 @@ iPhoneMirror exposes its existing USB session to local tools. Open the app,
 connect an unlocked iPhone, then choose **Automation → Enable Agent Access**.
 The window's subtitle shows when access is enabled and when an agent gesture is
 running. Choosing **Enable Agent Access** again revokes access and cancels the
-current gesture. Access starts off on every app launch. Nothing is sent to an AI provider by the app itself.
+current gesture. The switch remembers your choice across launches and updates;
+new installations default to off. Quitting revokes the current token and stops
+the listener without forgetting that choice. Each launch with access enabled
+creates a fresh token. Nothing is sent to an AI provider by the app itself.
 
 For Codex and other MCP clients, use the [stdio MCP bridge](MCP-BRIDGE.md).
 An agent can observe a screenshot, tap/swipe/type, then observe again to test a
@@ -19,8 +22,10 @@ While enabled, the app writes an owner-readable connection file:
 
 Its JSON contains `url` (`http://127.0.0.1:<port>`) and `token`. By default the
 port is assigned by the OS; **Automation → Port** can pin it to 8090 or a custom
-port (1024–65535). A pinned port that is already taken turns access off with a
-status message instead of silently moving. The token changes on every enable,
+port (1024–65535). A pinned port that is already taken leaves the listener off
+with a status message instead of silently moving. Your saved switch stays on;
+free the port and relaunch, toggle access off/on, or choose another port to retry.
+Startup failures do not erase your choice. The token changes on every enable,
 including when the port changes. Read this file per
 request and send `Authorization: Bearer <token>`. Do not commit, print, share,
 or put the token into an AI prompt. The bridge reads it without exposing it.
@@ -242,5 +247,8 @@ See [focused validation and device checks](AUTOMATION-OBSERVATION-QA.md).
    launch it with `restart: true`. Verify each step with a screenshot.
 7. Press volume up and down (the volume indicator appears), then lock and
    unlock by hand; control must resume.
-8. Disable access; the listener and discovery file must disappear. Relaunching
-   the app must leave access disabled.
+8. Enable access, quit, and relaunch: access must return with a fresh token.
+   Quit must remove the old discovery file and close the old listener.
+9. Disable access; the listener and discovery file must disappear. Relaunching
+   the app must leave access disabled. Stop Agent Action must not change this
+   saved preference. A port conflict must show an error without erasing it.
