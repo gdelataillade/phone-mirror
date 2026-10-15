@@ -30,17 +30,6 @@ pub struct DisplayServiceClient<R: ReadWrite> {
 }
 
 impl<R: ReadWrite> DisplayServiceClient<R> {
-    /// Stop only the caller-owned session; never terminate another client's stream.
-    pub async fn stop_owned_session(&mut self, id: uuid::Uuid) -> Result<plist::Value, IdeviceError> {
-        let mut input = XpcDictionary::new();
-        input.insert("avcMediaStreamOptionClientSessionID".into(), codable_uuid(id));
-        self.inner.invoke_inner(
-            Some("com.apple.coredevice.feature.stopmediastream".into()),
-            Some(input),
-            Some("com.apple.coredevice.action.mediastreamstop".into()),
-        ).await
-    }
-
     pub fn new(inner: super::super::CoreDeviceServiceClient<R>) -> Self {
         Self { inner }
     }
@@ -235,7 +224,9 @@ fn build_start_parameters(
     );
     params.insert("senderIP".into(), XPCObject::String(sender_ip.into()));
     params.insert("senderPort".into(), XPCObject::UInt64(sender_port as u64));
-    params.insert("timeout".into(), XPCObject::UInt64(3600));
+    // Reclaim orphaned streams after USB loss/process death. The host sends
+    // periodic RTCP on both streams, even during audio silence.
+    params.insert("timeout".into(), XPCObject::UInt64(20));
     params.insert("type".into(), XPCObject::String(stream_type.into()));
     params.insert("direction".into(), XPCObject::String("output".into()));
     params.insert("negotiatorOffer".into(), XPCObject::Data(negotiator_offer));

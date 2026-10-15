@@ -3,6 +3,19 @@ import Foundation
 /// Allowlisted counters only. Device names, identifiers, error strings and media never enter reports.
 public struct NativeHealth: Codable, Equatable, Sendable {
   public var stage = 0
+  public var cleanupStatus: Int?
+  public var cleanupDurationMs: UInt64?
+  public var cleanupLabel: String {
+    switch cleanupStatus {
+    case 1: return "No owned streams reported by the iPhone"
+    case 2: return "Waiting for the iPhone to expire its streams (20-second timeout)"
+    case 3: return "iPhone unreachable; release unconfirmed"
+    case 4: return "Release check timed out; release unconfirmed"
+    case 5: return "Unrecognized stream status; release unconfirmed"
+    case 6: return "iPhone rejected the release check; release unconfirmed"
+    default: return "Not checked"
+    }
+  }
   public var videoPackets: UInt64 = 0
   public var assembledFrames: UInt64 = 0
   public var queuedFrames: UInt64 = 0
@@ -40,13 +53,15 @@ public struct SessionHealth: Equatable, Sendable {
   public var report: String {
     """
     Stage: \(native.stageLabel)
+    Remote release: \(native.cleanupLabel)
+    Release check duration: \(native.cleanupDurationMs ?? 0) ms
     Video packets: \(native.videoPackets)
     Last video packet age at sample: \(native.lastPacketAgeMs.map { "\($0) ms" } ?? "not received")
     Frames assembled / queued / decoded: \(native.assembledFrames) / \(native.queuedFrames) / \(decodedFrames)
     Encoded queue overflows: \(native.queueOverflows)
     Stream discontinuities: \(native.discontinuities)
     Keyframe requests: \(native.refreshRequests)
-    Video feedback failures: \(native.feedbackFailures)
+    Media feedback failures: \(native.feedbackFailures)
     Decoder errors / skipped outputs: \(decoderErrors) / \(skippedFrames)
     Maximum decode time: \(maxDecodeMs) ms
     Maximum packet / decoded-output gap: \(native.maxPacketGapMs) / \(maxOutputGapMs) ms
@@ -55,8 +70,12 @@ public struct SessionHealth: Equatable, Sendable {
     """
   }
   public var guidance: String {
+    if let cleanup = native.cleanupStatus, (2...6).contains(cleanup) {
+      return
+        "Mirroring has stopped locally. The iPhone may need about 20 seconds to release Camera. If mirroring resumes over Wi-Fi, use Disconnect to end it."
+    }
     if native.feedbackFailures > 0 {
-      return "The USB video feedback path stopped responding. Reconnect the cable and retry."
+      return "The media feedback path stopped responding. Reconnect the cable and retry."
     }
     if native.orientationFailures > 0 {
       return "The iPhone stopped answering orientation queries. Reconnect to restore controls."

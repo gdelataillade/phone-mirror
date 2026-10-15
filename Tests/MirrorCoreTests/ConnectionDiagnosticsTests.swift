@@ -42,4 +42,21 @@ final class ConnectionDiagnosticsTests: XCTestCase {
     health.native.orientationFailures = 1
     XCTAssertTrue(health.guidance.contains("orientation"))
   }
+  func testReleaseEvidenceSurvivesCloseAndDoesNotClaimConfirmedRelease() {
+    var health = SessionHealth()
+    health.native.cleanupStatus = 2
+    health.native.cleanupDurationMs = 42
+    var log = ConnectionDiagnostics(started: 0)
+    log.record(.closed, now: 1, health: health)
+    XCTAssertEqual(log.lastSession.native.cleanupStatus, 2)
+    XCTAssertTrue(log.lastSession.report.contains("Waiting for the iPhone"))
+    XCTAssertTrue(log.lastSession.guidance.contains("20 seconds"))
+    for status in [3, 4, 5, 6] {
+      health.native.cleanupStatus = status
+      XCTAssertTrue(health.native.cleanupLabel.contains("unconfirmed"))
+    }
+    health.native.cleanupStatus = 1
+    XCTAssertTrue(health.native.cleanupLabel.contains("No owned streams reported"))
+  }
+
 }

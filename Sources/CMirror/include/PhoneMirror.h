@@ -68,4 +68,6 @@ void pm_dispatch_free(PMDispatchCall *call);
 void pm_cancel(PMHandle *handle);
 // No other call may use handle once close starts. Joins all work; may block.
 void pm_close(PMHandle *handle);
+// Same ownership as pm_close, returning final numeric telemetry. Free with pm_string_free.
+char *pm_close_with_health(PMHandle *handle);
 #endif

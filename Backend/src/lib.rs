@@ -24,6 +24,8 @@ mod apps;
 mod dispatch;
 pub use dispatch::*;
 mod health;
+mod media_cleanup;
+mod media_liveness;
 mod orientation;
 pub mod prepare;
 mod presence;
@@ -468,15 +470,61 @@ pub unsafe extern "C" fn pm_cancel(handle: *mut PMHandle) {
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pm_close(handle: *mut PMHandle) {
+    let report = unsafe { pm_close_with_health(handle) };
+    unsafe { pm_string_free(report) };
+}
+/// Frees the handle and returns final numeric telemetry after teardown has finished.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pm_close_with_health(handle: *mut PMHandle) -> *mut c_char {
     if handle.is_null() {
-        return;
+        return std::ptr::null_mut();
     }
     let mut h = unsafe { Box::from_raw(handle) };
+    let health = h.health.clone();
     let _ = h.cancel.send(true);
     let worker = h.worker.take();
-    drop(h); // Unblock a terminal event producer before joining it.
+    drop(h); // Unblock terminal event producers before joining.
     if let Some(worker) = worker {
         let _ = worker.join();
+    }
+    let json = health
+        .lock()
+        .map(|h| h.json())
+        .unwrap_or_else(|_| "{}".into());
+    CString::new(json).unwrap_or_default().into_raw()
+}
+
+#[cfg(test)]
+#[test]
+fn close_returns_final_health_even_when_terminal_delivery_was_blocked() {
+    let health = Arc::new(Mutex::new(health::Health::default()));
+    let worker_health = health.clone();
+    let (tx, rx) = mpsc::sync_channel(1);
+    assert!(tx.send(PMEvent::message(1, "full")).is_ok());
+    let (_, audio_rx) = mpsc::sync_channel(1);
+    let (commands, _) = async_mpsc::channel(1);
+    let (apps, _) = async_mpsc::channel(1);
+    let (cancel, _) = watch::channel(false);
+    let worker = thread::spawn(move || {
+        // pm_close must drop the event receiver before joining this worker.
+        let _ = tx.send(PMEvent::message(4, "closed"));
+        worker_health.lock().unwrap().cleanup_status = 2;
+    });
+    let handle = Box::into_raw(Box::new(PMHandle {
+        health,
+        events: Mutex::new(rx),
+        audio_events: Mutex::new(audio_rx),
+        commands,
+        apps,
+        cancel,
+        worker: Some(worker),
+    }));
+    unsafe {
+        let text = pm_close_with_health(handle);
+        let value: serde_json::Value =
+            serde_json::from_str(CStr::from_ptr(text).to_str().unwrap()).unwrap();
+        pm_string_free(text);
+        assert_eq!(value["cleanupStatus"], 2);
     }
 }
 
@@ -562,11 +610,19 @@ async fn run(
     .await;
     // Cleanup even when setup was cancelled after the audio half started.
     status(tx, "Closing session…");
-    let _ = tokio::time::timeout(
-        Duration::from_millis(300),
-        display.stop_owned_session(session_id),
+    drop(display);
+    let began = std::time::Instant::now();
+    let release = media_cleanup::inspect(
+        &mut adapter,
+        &mut rsd,
+        session_id,
+        Duration::from_secs(if wifi { 6 } else { 2 }),
     )
     .await;
+    if let Ok(mut h) = health.lock() {
+        h.cleanup_status = release as u32;
+        h.cleanup_duration_ms = began.elapsed().as_millis() as u64;
+    }
     result
 }
 
@@ -715,6 +771,7 @@ async fn stream(
         // field does not match what the device's live RTP packets actually carry).
         let audio_payload_type =
             find_int(&audio_response, "RxPayloadType", 0).and_then(|v| u8::try_from(v).ok());
+        let audio_keepalive = media_liveness::Keepalive::negotiated(&audio_response)?;
         let our_ssrc = uuid::Uuid::new_v4().as_u128() as u32;
         let call_id = uuid::Uuid::new_v4().to_string();
         let offer =
@@ -733,6 +790,7 @@ async fn stream(
             )),
         )
         .await?;
+        let video_keepalive = media_liveness::Keepalive::negotiated(&response)?;
         let answer = find_data(&response, "negotiatorAnswer", 0)
             .ok_or("No video negotiation answer from the iPhone.")?;
         let negotiated =
@@ -740,6 +798,8 @@ async fn stream(
         Ok::<_, String>((
             audio,
             audio_payload_type,
+            audio_keepalive,
+            video_keepalive,
             video,
             our_ssrc,
             call_id,
@@ -755,6 +815,8 @@ async fn stream(
     let (
         audio,
         audio_payload_type,
+        mut audio_keepalive,
+        mut video_keepalive,
         video,
         our_ssrc,
         call_id,
@@ -802,6 +864,8 @@ async fn stream(
     let mut assembler = HevcAccessUnitAssembler::new(negotiated.payload_type, negotiated.ssrc);
     let mut timer = tokio::time::interval(Duration::from_millis(50));
     timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut keepalive_timer = tokio::time::interval(Duration::from_secs(1));
+    keepalive_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let started = tokio::time::Instant::now();
     let mut metrics = health::Health {
         stage: 6,
@@ -827,7 +891,12 @@ async fn stream(
     }
     let result = 'media: loop {
         tokio::select! {
+            biased;
             _ = cancelled(&mut cancel_media) => break Ok(()),
+            _ = keepalive_timer.tick() => {
+                if let Err(error) = send_feedback(audio.send_to(audio_keepalive.port, audio_keepalive.packet()), &mut metrics).await { break Err(error); }
+                if let Err(error) = send_feedback(video.send_to(video_keepalive.port, video_keepalive.packet()), &mut metrics).await { break Err(error); }
+            }
             _ = timer.tick() => {
                 let observation = *orientation_rx.borrow();
                 metrics.orientation_queries = observation.queries;
@@ -866,6 +935,7 @@ async fn stream(
                     if trace {eprintln!("audio: dropped, payload_type {} != negotiated {pt}", rtp.payload_type);}
                     continue;
                 }}
+                audio_keepalive.receive(rtp.ssrc, rtp.sequence_number);
                 if rtp.payload.is_empty() {continue;}
                 audio_packets_seen += 1;
                 if trace && audio_packets_seen == 1 {
@@ -881,6 +951,7 @@ async fn stream(
                 if is_rtcp(&packet.data) {continue;}
                 let Some(rtp)=RtpPacket::parse(&packet.data) else {continue;};
                 if rtp.payload_type!=negotiated.payload_type || rtp.ssrc!=negotiated.ssrc {continue;}
+                video_keepalive.receive(rtp.ssrc, rtp.sequence_number);
                 let packet_time = tokio::time::Instant::now();
                 metrics.video_packets += 1;
                 if let Some(last) = last_packet { metrics.max_packet_gap_ms = metrics.max_packet_gap_ms.max(packet_time.duration_since(last).as_millis() as u64); }
@@ -925,7 +996,7 @@ async fn stream(
     let _ = orientation_worker.await;
     let _ = app_worker.await;
     metrics.publish(health);
-    let _ = input.await; // Held inputs are released before stopping the owned media session.
+    let _ = input.await; // Held inputs are released before dropping the owned media transports.
     result
 }
 
@@ -938,7 +1009,7 @@ async fn send_feedback(
         Ok(Ok(())) => Ok(()),
         _ => {
             health.feedback_failures += 1;
-            Err("The USB video feedback path stopped responding. Reconnecting.".into())
+            Err("The media feedback path stopped responding. Reconnecting.".into())
         }
     }
 }

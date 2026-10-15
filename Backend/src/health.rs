@@ -4,6 +4,8 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone, Default)]
 pub struct Health {
     pub stage: u32,
+    pub cleanup_status: u32,
+    pub cleanup_duration_ms: u64,
     pub video_packets: u64,
     pub assembled_frames: u64,
     pub queued_frames: u64,
@@ -23,6 +25,8 @@ impl Health {
     pub fn json(&self) -> String {
         serde_json::json!({
             "stage": self.stage,
+            "cleanupStatus": self.cleanup_status,
+            "cleanupDurationMs": self.cleanup_duration_ms,
             "videoPackets": self.video_packets,
             "assembledFrames": self.assembled_frames,
             "queuedFrames": self.queued_frames,

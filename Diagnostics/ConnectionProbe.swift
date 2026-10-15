@@ -5,6 +5,9 @@ import MirrorCore
 /// Exercises the actual app coordinator against a physical USB device without sending input.
 @main struct ConnectionProbe {
   @MainActor static func main() async {
+    // A diagnostic must not publish an agent listener or overwrite app preferences.
+    UserDefaults.standard.setVolatileDomain(
+      ["automationAccessRequested": false], forName: UserDefaults.argumentDomain)
     if let index = CommandLine.arguments.firstIndex(of: "--seconds") {
       guard CommandLine.arguments.indices.contains(index + 1),
         let seconds = Double(CommandLine.arguments[index + 1]), seconds.isFinite,
