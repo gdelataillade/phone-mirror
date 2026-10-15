@@ -43,6 +43,12 @@ The app checks for updates automatically and can check on demand (app menu → C
 
 Keep your iPhone unlocked, click **Mirror iPhone**, then click the picture to control it.
 
+When finished, use **Disconnect** before opening Camera on the iPhone. Releasing the
+phone's media session can take about 20 seconds. If Camera was already open with a
+frozen preview, close it from the app switcher and reopen it after mirroring ends.
+With Wi-Fi continuation enabled, unplugging alone keeps mirroring active.
+See [camera release behavior and validation](docs/CAMERA-RELEASE.md).
+
 ## AI agents (MCP)
 
 Let Claude Code, Codex or another MCP client see and operate your iPhone to test apps: screenshots, taps, typing, buttons, and launching apps by bundle ID.

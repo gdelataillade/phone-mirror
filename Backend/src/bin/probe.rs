@@ -1,13 +1,19 @@
-//! Video stream probe: `probe [SECONDS] [UDID]`. Streams without decoding or saving
+//! Video stream probe: `probe [SECONDS] [UDID] [--usb-only] [--crash]`. Streams without decoding or saving
 //! images and reports frame timing and the native counters. Uses the first iPhone found
 //! unless a UDID is given; the backend then prefers USB and falls back to Wi-Fi.
+//! --crash exits without cleanup to validate the device-side timeout.
 use phone_mirror_backend::*;
 use std::{
     ffi::{CStr, CString},
     time::{Duration, Instant},
 };
 fn main() {
-    let mut args = std::env::args().skip(1);
+    let all_args: Vec<_> = std::env::args().skip(1).collect();
+    let crash = all_args.iter().any(|s| s == "--crash");
+    let usb_only = all_args.iter().any(|s| s == "--usb-only");
+    let mut args = all_args
+        .into_iter()
+        .filter(|s| s != "--crash" && s != "--usb-only");
     let duration = args.next().and_then(|s| s.parse().ok()).unwrap_or(20);
     let requested = args.next();
     unsafe {
@@ -30,7 +36,14 @@ fn main() {
             }
         };
         let id = CString::new(id).unwrap();
-        let handle = pm_start(id.as_ptr(), TRANSPORT_USB | TRANSPORT_WIFI);
+        let handle = pm_start(
+            id.as_ptr(),
+            if usb_only {
+                TRANSPORT_USB
+            } else {
+                TRANSPORT_USB | TRANSPORT_WIFI
+            },
+        );
         let start = Instant::now();
         let mut frames = 0u64;
         let mut first: Option<Duration> = None;
@@ -39,7 +52,20 @@ fn main() {
         let mut gaps_over_250ms = 0u32;
         let mut per_second: Vec<u32> = Vec::new();
         let mut failed = false;
+        let mut audio_packets = 0u64;
+        let mut last_audio = 0.0;
         while start.elapsed() < Duration::from_secs(duration) {
+            for _ in 0..64 {
+                let audio = pm_poll_audio(handle, 0);
+                if audio.is_null() {
+                    break;
+                }
+                if pm_event_kind(audio) == 7 {
+                    audio_packets += 1;
+                    last_audio = start.elapsed().as_secs_f64();
+                }
+                pm_event_free(audio);
+            }
             let event = pm_poll(handle, 100);
             if event.is_null() {
                 continue;
@@ -90,15 +116,19 @@ fn main() {
             }
             pm_event_free(event);
         }
-        let health = pm_health(handle);
+        println!("Audio packets: {audio_packets}; last at {last_audio:.1}s");
+        if crash {
+            println!("Exiting without cleanup to test device-side expiry");
+            std::process::exit(if failed || frames == 0 { 1 } else { 0 });
+        }
+        let health = pm_close_with_health(handle);
         let health_text = if health.is_null() {
-            String::from("unavailable")
+            "unavailable".into()
         } else {
             let text = CStr::from_ptr(health).to_string_lossy().into_owned();
             pm_string_free(health);
             text
         };
-        pm_close(handle);
         let elapsed = start.elapsed().as_secs_f64();
         let streaming = first.map_or(0.0, |f| elapsed - f.as_secs_f64());
         println!("Complete frames: {frames}; elapsed {elapsed:.1}s");

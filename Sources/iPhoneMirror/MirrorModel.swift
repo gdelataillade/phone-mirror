@@ -10,6 +10,7 @@ import SwiftUI
   @Published private(set) var lifecycle = ConnectionLifecycle()
   @Published var status = "Ready when you are"
   @Published var error: String?
+  @Published private(set) var cameraReleaseNotice: String?
   @Published var hasPicture = false
   @Published var fps = 0
   @Published var dimensions = ""
@@ -104,7 +105,7 @@ import SwiftUI
       appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
         ?? "0.1.0",
       macOSVersion: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
-      iOSVersion: selected?.version ?? "")
+      iOSVersion: selected?.version ?? "", transport: transport?.rawValue)
   }
   private func record(_ event: ConnectionDiagnostics.Event, health: SessionHealth? = nil) {
     let now = ProcessInfo.processInfo.systemUptime
@@ -265,6 +266,13 @@ import SwiftUI
     case 4:
       // NativeSession sends this only after input cleanup and pm_close complete.
       record(.closed, health: session?.healthSnapshot())
+      let release = diagnostics.lastSession.native.cleanupStatus ?? 0
+      if release > 0 {
+        cameraReleaseNotice =
+          (2...6).contains(release)
+          ? "Mirroring has stopped. Camera may take about 20 seconds to become available."
+          : nil
+      }
       transport = nil
       usbAvailableOnWiFi = false
       recording.stop()
@@ -273,6 +281,9 @@ import SwiftUI
       fps = 0
       execute(lifecycle.closed(attempt, now: ProcessInfo.processInfo.systemUptime))
       updateWaitingStatus()
+      if lifecycle.phase == .idle {
+        status = "Disconnected"
+      }
       let completion = onSessionClosed
       onSessionClosed = nil
       completion?()
@@ -479,7 +490,10 @@ import SwiftUI
       fps = 0
       return
     }
-    if connecting { record(.firstFrame) }
+    if connecting {
+      record(.firstFrame)
+      cameraReleaseNotice = nil
+    }
     lifecycle.frame(id, now: now)
     hasPicture = true
     let displaySize =

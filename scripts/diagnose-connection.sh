@@ -13,6 +13,6 @@ xcrun swiftc -parse-as-library -module-cache-path "$CLANG_MODULE_CACHE_PATH" \
   -L Backend/target/release -lphone_mirror_backend \
   -framework Security -framework SystemConfiguration \
   Sources/iPhoneMirror/Decoder.swift Sources/iPhoneMirror/Backend.swift Sources/iPhoneMirror/AudioPlayback.swift Sources/iPhoneMirror/AutomationServer.swift \
-  Sources/iPhoneMirror/MirrorModel.swift Sources/iPhoneMirror/Recording.swift Diagnostics/ConnectionProbe.swift \
+  Sources/iPhoneMirror/MirrorModel.swift Sources/iPhoneMirror/Automation.swift Sources/iPhoneMirror/Recording.swift Diagnostics/ConnectionProbe.swift \
   -o .build/diagnostics/connection-probe
 exec .build/diagnostics/connection-probe "$@"

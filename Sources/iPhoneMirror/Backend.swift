@@ -158,7 +158,14 @@ final class NativeSession: @unchecked Sendable {
       cancelled = true
       lock.unlock()
       audioLoopFinished.wait()
-      pm_close(session)
+      if let text = pm_close_with_health(session) {
+        let native = try? JSONDecoder().decode(
+          NativeHealth.self, from: Data(String(cString: text).utf8))
+        pm_string_free(text)
+        lock.lock()
+        if let native { health.native = native }
+        lock.unlock()
+      }
       decoder.stop()
       mailbox.clear()
       event?(4, "Disconnected")

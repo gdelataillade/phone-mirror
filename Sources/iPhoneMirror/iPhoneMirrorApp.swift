@@ -225,9 +225,10 @@ struct MirrorWindow: View {
         model.error
           ?? (model.active
             ? model.status
-            : model.useWiFi
-              ? "Connect by USB or Wi-Fi, unlock your iPhone,\nand keep it within reach."
-              : "Connect by USB, unlock your iPhone,\nand keep it within reach.")
+            : model.cameraReleaseNotice
+              ?? (model.useWiFi
+                ? "Connect by USB or Wi-Fi, unlock your iPhone,\nand keep it within reach."
+                : "Connect by USB, unlock your iPhone,\nand keep it within reach."))
       )
       .font(.system(size: 13)).foregroundStyle(.secondary).multilineTextAlignment(.center)
       .lineSpacing(4).fixedSize(horizontal: false, vertical: true).padding(.top, 13).padding(

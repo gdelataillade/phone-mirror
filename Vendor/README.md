@@ -27,9 +27,12 @@ its USB display/input path is unaffected. That optional module does not include
 the later back-reference support. The peer-device test uses an all-zero synthetic
 device identifier.
 
-Our additional change to `display_stream/client.rs` adds `stop_owned_session(UUID)` using
-the session-specific XPC UUID field. The application never calls `stop_media_stream()`,
-whose upstream implementation uses `stopAll=true`.
+Our `display_stream/client.rs` start parameters use a 20-second timeout. The backend
+sends session-owned RTCP receiver reports on audio and video, including during silence.
+The obsolete UUID stop request was removed: the daemon expects numeric stream tokens,
+which are not fully exposed by its start/status responses on the tested iOS version.
+The application never calls `stop_media_stream()` (`stopAll=true`); it closes its own
+transports and checks status, reporting pending expiry rather than claiming release.
 
 Our additional change to `display_stream/negotiation.rs` disables the video settings'
 long-term reference mode (field 7). The assembler requires ordinary HEVC
