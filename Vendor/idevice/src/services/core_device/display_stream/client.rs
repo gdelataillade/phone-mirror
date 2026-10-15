@@ -30,17 +30,6 @@ pub struct DisplayServiceClient<R: ReadWrite> {
 }
 
 impl<R: ReadWrite> DisplayServiceClient<R> {
-    /// Stop only the caller-owned session; never terminate another client's stream.
-    pub async fn stop_owned_session(&mut self, id: uuid::Uuid) -> Result<plist::Value, IdeviceError> {
-        let mut input = XpcDictionary::new();
-        input.insert("avcMediaStreamOptionClientSessionID".into(), codable_uuid(id));
-        self.inner.invoke_inner(
-            Some("com.apple.coredevice.feature.stopmediastream".into()),
-            Some(input),
-            Some("com.apple.coredevice.action.mediastreamstop".into()),
-        ).await
-    }
-
     pub fn new(inner: super::super::CoreDeviceServiceClient<R>) -> Self {
         Self { inner }
     }
@@ -67,7 +56,12 @@ impl<R: ReadWrite> DisplayServiceClient<R> {
             .await
     }
 
-    /// Stop the active media stream.
+    /// Stop the active media stream. The device decodes only
+    /// `StopRequest(stopAll, identifiers)`; this sends `stopAll`, ending every session.
+    ///
+    /// Send it on a fresh connection whose only request it is: a second reply-bearing
+    /// request on one connection makes the device's display daemon abort before its
+    /// teardown, leaving Camera and the microphone blocked until the device restarts.
     pub async fn stop_media_stream(&mut self) -> Result<plist::Value, IdeviceError> {
         let mut input = plist::Dictionary::new();
         input.insert("stopAll".into(), plist::Value::Boolean(true));
