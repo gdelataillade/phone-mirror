@@ -3,6 +3,21 @@ import XCTest
 @testable import MirrorCore
 
 final class ConnectionDiagnosticsTests: XCTestCase {
+  func testReportUsesObservedTransportAndRedactsUnexpectedValues() {
+    let log = ConnectionDiagnostics(started: 0)
+    for (transport, label) in [("usb", "USB"), ("wifi", "Wi-Fi"), ("private-id", "unknown")] {
+      let report = log.report(
+        current: nil, phase: .live, appVersion: "0.5.2", macOSVersion: "27", iOSVersion: "27",
+        transport: transport)
+      XCTAssertTrue(report.contains("Transport: \(label)"))
+      XCTAssertFalse(report.contains("private-id"))
+    }
+    XCTAssertTrue(
+      log.report(
+        current: nil, phase: .idle, appVersion: "0.5.2", macOSVersion: "27", iOSVersion: "27"
+      )
+      .contains("Transport: unknown"))
+  }
   func testReportRetainsFailureCountersAfterReconnectWithoutAcceptingIdentityText() {
     var log = ConnectionDiagnostics(started: 100)
     log.record(.opening, now: 100)

@@ -47,6 +47,13 @@ Build the diagnostics with
    and decoder through many timeout intervals. It disables agent access only in
    its own volatile preferences and does not change the installed app's settings.
 
+7. With Use Wi-Fi When Unplugged enabled, mirror over USB, unplug, and confirm
+   the app shows Wi-Fi and continues for at least 60 seconds. Disconnect, wait
+   30 seconds, and check physical Camera before returning to Settings.
+8. Mirror over USB, put the Mac to Sleep, and check Camera after 30 seconds while
+   the Mac remains asleep. Close Camera and return to Settings before waking the
+   Mac. Confirm mirroring resumes and inspect Connection Diagnostics for retries.
+
 Physical unplug, Wi-Fi fallback, actual Mac sleep/wake, and visible Camera checks
 remain distinct from a process-exit test. Check one scenario at a time. A test
 must not overlap another mirror client, and Camera should stay closed until the
@@ -54,7 +61,8 @@ session and expiry checks have ended.
 
 ## Validation record — 15 October 2026
 
-- App build and 142 automated tests pass (63 Rust, 79 Swift).
+- App build and 143 automated tests pass (63 Rust, 80 Swift), including
+  the transport-report regression test added during device validation.
 - The connected iPhone negotiated `RTCPTimeoutEnabled=true` and a 20-second
   interval for both audio and video. A short session's streams subsequently
   disappeared without a successful explicit stop request.
@@ -87,8 +95,29 @@ session and expiry checks have ended.
   the idle window visibly displayed the Camera release-delay notice. The app
   was then quit.
 
-Actual Mac sleep/wake and Wi-Fi transition behavior have not been device-tested
-for this change. These results cover one iPhone 17 running iOS 27.0. The expiry
+- Wi-Fi handoff: USB removal at +31 s, a new decoded picture at +33 s, and
+  uninterrupted Wi-Fi mirroring until Disconnect at +113 s (80 seconds live).
+  The Wi-Fi session decoded 1,112 frames with no errors, overflows,
+  discontinuities or feedback failures; all 160 orientation queries succeeded.
+  The shutdown status check took 43 ms and reported awaiting expiry. The user
+  confirmed Camera worked after Disconnect and a 30-second wait.
+- This test exposed a pre-existing hardcoded USB label in diagnostic reports.
+  Reports now use the observed transport, allowlisted to USB/Wi-Fi/unknown;
+  missing or unexpected values cannot misreport USB or leak arbitrary text.
+
+- Actual Mac sleep/wake: macOS power logs confirm Software Sleep, a maintenance
+  DarkWake, another sleep, and full user wake. The user confirmed Camera worked
+  before waking the Mac. App events recorded close at the sleep notification
+  (+71 s, status check 157 ms) and new frames two seconds after its wake
+  notification (+116 s -> +118 s). The first resumed session stalled at +121 s
+  with one queue overflow and automatically retried; a new picture arrived at
+  +122 s. That session remained stable for 69 seconds until Disconnect, decoding
+  1,550 frames with no errors, overflows or feedback failures and 139 successful
+  orientation queries. Cleanup took 34 ms. This validates release during sleep
+  and eventual automatic recovery, not seamless wake recovery. Notification
+  timestamps are not measurements of the physical sleep duration.
+
+These results cover one iPhone 17 running iOS 27.0. The expiry
 strategy also delays normal Disconnect by about 20 seconds; it does not promise
 immediate release. An already-frozen Camera may still need closing and reopening.
 

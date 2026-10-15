@@ -105,7 +105,7 @@ import SwiftUI
       appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
         ?? "0.1.0",
       macOSVersion: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
-      iOSVersion: selected?.version ?? "")
+      iOSVersion: selected?.version ?? "", transport: transport?.rawValue)
   }
   private func record(_ event: ConnectionDiagnostics.Event, health: SessionHealth? = nil) {
     let now = ProcessInfo.processInfo.systemUptime

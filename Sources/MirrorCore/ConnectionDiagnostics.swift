@@ -165,8 +165,14 @@ public struct ConnectionDiagnostics {
   }
   public func report(
     current: SessionHealth?, phase: ConnectionLifecycle.Phase,
-    appVersion: String, macOSVersion: String, iOSVersion: String
+    appVersion: String, macOSVersion: String, iOSVersion: String, transport: String? = nil
   ) -> String {
+    let transportLabel: String
+    switch transport {
+    case "usb": transportLabel = "USB"
+    case "wifi": transportLabel = "Wi-Fi"
+    default: transportLabel = "unknown"
+    }
     let history = entries.map {
       let line = "+\($0.seconds)s: \($0.event.rawValue)"
       return $0.health.map { line + "\n" + $0.report } ?? line
@@ -174,7 +180,7 @@ public struct ConnectionDiagnostics {
     return """
       iPhoneMirror connection diagnostics · format 1
       App: \(Self.version(appVersion)) · macOS: \(Self.version(macOSVersion)) · iOS: \(Self.version(iOSVersion))
-      Transport: USB · State: \(phase) · Connection attempts: \(attempts)
+      Transport: \(transportLabel) · State: \(phase) · Connection attempts: \(attempts)
       Counters are local observations, not end-to-end latency measurements.
       Gaps exclude startup and do not include Mac rendering time.
       No screen contents, typed text, clipboard, device names, identifiers, paths or raw errors are included.
