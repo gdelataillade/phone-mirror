@@ -1,8 +1,8 @@
 #!/bin/bash
 # Cuts a signed, notarized release: builds, notarizes the app and DMG, signs
 # the Sparkle update zip, appends an appcast entry, publishes a GitHub
-# Release, and commits the version bump + appcast. Run from a clean working
-# tree on the branch you want to release from.
+# Release, then publishes the appcast after verifying the public assets. Run
+# from a clean, reviewed main branch. Version and feed use separate commits.
 #
 # One-time setup this script depends on and cannot do for you:
 #   1. A "Developer ID Application" certificate in your login keychain.
@@ -29,6 +29,15 @@ cd "$(dirname "$0")/.."
 version="${1:-}"
 if [ -z "$version" ]; then
     echo "Usage: scripts/release.sh <version>   e.g. scripts/release.sh 0.2.0" >&2
+    exit 1
+fi
+
+if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Use a major.minor.patch release version." >&2
+    exit 1
+fi
+if [ "$(git branch --show-current)" != main ]; then
+    echo "Release only reviewed changes from main." >&2
     exit 1
 fi
 
@@ -61,6 +70,8 @@ if [ -z "$sign_update" ]; then
 fi
 
 echo "Releasing iPhoneMirror $version, signing with: $identity"
+
+release_source_sha="$(git rev-parse HEAD)"
 
 # --- Version bump ---
 previous_build="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" Resources/Info.plist)"
@@ -166,18 +177,5 @@ if comment_block:
 PY
 "$sign_update" --account "$sparkle_account" docs/appcast.xml
 
-# --- Commit and push BEFORE tagging the release: gh release create with no
-# --target tags whatever the branch's latest commit happens to be, which
-# without this ordering would be the commit before the version bump and
-# appcast update even existed. ---
-git add Resources/Info.plist docs/appcast.xml
-git commit -m "Release iPhoneMirror $version"
-git push
-release_sha="$(git rev-parse HEAD)"
-
-# --- Publish the GitHub Release, explicitly pinned to that commit ---
-release_notes="Release $version. See VALIDATION.md and the commit history for details."
-gh release create "v$version" "$dmg" "$update_zip" \
-    --repo "$repo" --target "$release_sha" --title "iPhoneMirror $version" --notes "$release_notes"
-
-echo "Released iPhoneMirror $version: https://github.com/$repo/releases/tag/v$version"
+# Assets become publicly downloadable before the new Sparkle feed is pushed.
+./scripts/publish-release.sh "$version" "$dmg" "$update_zip" "$release_source_sha"
