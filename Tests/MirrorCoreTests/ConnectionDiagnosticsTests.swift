@@ -3,6 +3,64 @@ import XCTest
 @testable import MirrorCore
 
 final class ConnectionDiagnosticsTests: XCTestCase {
+  func testNativeFailureCodeDecodesAndSurvivesReconnectAndCleanup() throws {
+    var encoded =
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(NativeHealth())) as! [String: Any]
+    encoded["failureCategory"] = 4
+    var native = try JSONDecoder().decode(
+      NativeHealth.self, from: JSONSerialization.data(withJSONObject: encoded))
+    XCTAssertEqual(native.failureLabel, "Input command timed out")
+    native.cleanupStatus = 2
+    var health = SessionHealth()
+    health.native = native
+    var log = ConnectionDiagnostics(started: 0)
+    log.record(.closed, now: 1, health: health)
+    log.record(.opening, now: 2)
+    let report = log.report(
+      current: SessionHealth(), phase: .live,
+      appVersion: "0.5.2", macOSVersion: "27", iOSVersion: "27", transport: "wifi")
+    XCTAssertTrue(report.contains("Native failure: Input command timed out"))
+    XCTAssertTrue(report.contains("20-second timeout"))
+    XCTAssertEqual(log.lastSession.native.failureCategory, 4)
+    encoded.removeValue(forKey: "failureCategory")
+    let older = try JSONDecoder().decode(
+      NativeHealth.self, from: JSONSerialization.data(withJSONObject: encoded))
+    XCTAssertEqual(older.failureLabel, "None recorded")
+  }
+
+  func testNativeFailureLabelsAreAllowlisted() {
+    var health = SessionHealth()
+    // Pin the wire-code contract, not just whether a label is present.
+    let labels = [
+      "Setup failed", "Orientation query failed", "Input worker stopped",
+      "Input command timed out", "Input command failed", "Video transport closed",
+      "Audio transport closed", "Media feedback failed", "Video recovery timed out",
+      "First picture timed out", "Native worker panicked", "Native runtime failed",
+      "Other native failure",
+    ]
+    for (index, label) in labels.enumerated() {
+      health.native.failureCategory = UInt32(index + 1)
+      XCTAssertEqual(health.native.failureLabel, label)
+    }
+    health.native.failureCategory = UInt32.max
+    XCTAssertEqual(health.native.failureLabel, "Unknown native failure")
+    XCTAssertFalse(health.report.contains(String(UInt32.max)))
+    health.native.failureCategory = 0
+    XCTAssertEqual(health.native.failureLabel, "None recorded")
+  }
+  func testDecodedPositionIncludesEarlierFailuresAndSkippedEvents() {
+    var health = SessionHealth()
+    health.recordDecode(produced: true, failed: false)
+    XCTAssertEqual(health.decodedThrough, 1)
+    health.recordDecode(produced: false, failed: true)
+    health.recordDecode(produced: false, failed: false)
+    XCTAssertEqual(health.decodedThrough, 1)
+    health.recordDecode(produced: true, failed: false)
+    XCTAssertEqual(health.decodedFrames, 2)
+    XCTAssertEqual(health.decoderErrors, 1)
+    XCTAssertEqual(health.skippedFrames, 1)
+    XCTAssertEqual(health.decodedThrough, 4)
+  }
   func testReportUsesObservedTransportAndRedactsUnexpectedValues() {
     let log = ConnectionDiagnostics(started: 0)
     for (transport, label) in [("usb", "USB"), ("wifi", "Wi-Fi"), ("private-id", "unknown")] {

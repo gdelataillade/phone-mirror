@@ -52,7 +52,12 @@ for a random-access frame. The backend sends keyframe requests and stops with an
 explicit error if recovery fails. The app then closes the old native worker before
 creating a new session, decoder, input queue and view. Keyframe-only recovery did
 not restore a deliberately overflowed stream on the test phone; full reconnection
-did. A short HID authentication delay runs independently from media reception.
+did. Recovery bookkeeping is separate from lifetime error counters: a fresh sync
+picture must be queued and decoded before a recovered, drained pipeline can use
+idle heartbeats again. A dropped or failed earlier frame does not permanently
+invalidate subsequent healthy idle. The one-second stalled-output deadline and
+native recovery deadlines are unchanged. A short HID authentication delay runs
+independently from media reception.
 Feedback goes to port 50001, the device feedback endpoint specified in the offer;
 it is distinct from the incoming RTP source port.
 Apple's long-term-reference video mode is disabled for compatibility with the decoder.
@@ -80,8 +85,11 @@ Open **iPhone → Connection Diagnostics…** to inspect current counters and re
 connection events, then **Copy Report** or **Save Report…**. Reports retain closed
 session counters across reconnects and up to 60 recent events. They include app/OS
 versions, packet/frame counts, decode timing, queue overloads, feedback failures,
-orientation response timing and relative event times. They exclude device names,
-identifiers, paths, raw error strings, screen contents, typed text and clipboard data.
+orientation response timing, allowlisted native failure categories and relative event
+times. Categories distinguish input timeout/error, transport, feedback, orientation,
+recovery, first-picture, setup and worker failures; the earliest recorded cause
+survives cleanup and reconnect. They exclude device names, identifiers, paths, raw
+error strings, screen contents, typed text and clipboard data.
 Nothing is uploaded automatically; reports are kept in memory unless you export them.
 Timing counters describe this pipeline, not end-to-end latency or Mac rendering.
 

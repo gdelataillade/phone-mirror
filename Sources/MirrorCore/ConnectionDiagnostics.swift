@@ -2,6 +2,27 @@ import Foundation
 
 /// Allowlisted counters only. Device names, identifiers, error strings and media never enter reports.
 public struct NativeHealth: Codable, Equatable, Sendable {
+  /// Optional to accept snapshots predating this category field.
+  public var failureCategory: UInt32?
+  public var failureLabel: String {
+    switch failureCategory {
+    case nil, 0: return "None recorded"
+    case 1: return "Setup failed"
+    case 2: return "Orientation query failed"
+    case 3: return "Input worker stopped"
+    case 4: return "Input command timed out"
+    case 5: return "Input command failed"
+    case 6: return "Video transport closed"
+    case 7: return "Audio transport closed"
+    case 8: return "Media feedback failed"
+    case 9: return "Video recovery timed out"
+    case 10: return "First picture timed out"
+    case 11: return "Native worker panicked"
+    case 12: return "Native runtime failed"
+    case 13: return "Other native failure"
+    default: return "Unknown native failure"
+    }
+  }
   public var stage = 0
   public var cleanupStatus: Int?
   public var cleanupDurationMs: UInt64?
@@ -19,6 +40,8 @@ public struct NativeHealth: Codable, Equatable, Sendable {
   public var videoPackets: UInt64 = 0
   public var assembledFrames: UInt64 = 0
   public var queuedFrames: UInt64 = 0
+  public var recoveryPending = false
+  public var recoveryFrame: UInt64 = 0
   public var queueOverflows: UInt64 = 0
   public var discontinuities: UInt64 = 0
   public var refreshRequests: UInt64 = 0
@@ -45,19 +68,34 @@ public struct NativeHealth: Codable, Equatable, Sendable {
 public struct SessionHealth: Equatable, Sendable {
   public var native = NativeHealth()
   public var decodedFrames: UInt64 = 0
+  /// Queue position of the latest picture that produced decoded output. Unlike
+  /// decodedFrames, this includes earlier failed/skipped events in its position.
+  public var decodedThrough: UInt64 = 0
   public var decoderErrors: UInt64 = 0
   public var skippedFrames: UInt64 = 0
   public var maxDecodeMs: UInt64 = 0
   public var maxOutputGapMs: UInt64 = 0
   public init() {}
+  public mutating func recordDecode(produced: Bool, failed: Bool) {
+    if failed {
+      decoderErrors += 1
+    } else if produced {
+      decodedFrames += 1
+      decodedThrough = decodedFrames + decoderErrors + skippedFrames
+    } else {
+      skippedFrames += 1
+    }
+  }
   public var report: String {
     """
     Stage: \(native.stageLabel)
+    Native failure: \(native.failureLabel)
     Remote release: \(native.cleanupLabel)
     Release check duration: \(native.cleanupDurationMs ?? 0) ms
     Video packets: \(native.videoPackets)
     Last video packet age at sample: \(native.lastPacketAgeMs.map { "\($0) ms" } ?? "not received")
     Frames assembled / queued / decoded: \(native.assembledFrames) / \(native.queuedFrames) / \(decodedFrames)
+    Recovery pending / sync queue position / decoded through: \(native.recoveryPending) / \(native.recoveryFrame) / \(decodedThrough)
     Encoded queue overflows: \(native.queueOverflows)
     Stream discontinuities: \(native.discontinuities)
     Keyframe requests: \(native.refreshRequests)

@@ -16,16 +16,15 @@ public struct VideoWatchdog {
   }
   /// CoreDevice can stop sending pictures when the screen is unchanged. Only
   /// accept that silence with a NEW device response and a completely drained,
-  /// error-free pipeline. Re-reading a cached health snapshot proves nothing.
+  /// recovered pipeline. Re-reading a cached health snapshot proves nothing.
   public mutating func observe(health: SessionHealth, now: TimeInterval) {
     let native = health.native
     preparing = (1...5).contains(native.stage)
     if native.stage == 6 && streamStarted == nil { streamStarted = now }
+    let recovering = native.recoveryPending || native.recoveryFrame > health.decodedThrough
     guard native.stage == 6, health.decodedFrames > 0,
-      native.queuedFrames == health.decodedFrames,
-      native.assembledFrames == native.queuedFrames,
-      native.queueOverflows == 0, native.discontinuities == 0, native.feedbackFailures == 0,
-      health.decoderErrors == 0, native.orientationFailures == 0
+      !recovering, native.queuedFrames == health.decodedThrough,
+      native.feedbackFailures == 0, native.orientationFailures == 0
     else {
       lastIdleHeartbeat = nil
       orientationQueries = native.orientationQueries

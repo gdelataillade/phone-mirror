@@ -1,177 +1,121 @@
 # Release validation — 4 November 2026
 
-Starting integration commit: `1f4ea9219e9770fd2380641f66a43033b4fe2f87`, based on
-remote main `381d466f2a415afade16759e593a34791d430ce8`.
-All work is in the isolated `fix/audit-hardening-main-20261104` worktree.
-No live push, tag, GitHub release, feed publication or notarization submission is
-authorized or performed by this validation task.
+**Status: not ready for release.** The affected device runs overlapped a second
+installed mirror client. They are not isolated acceptance evidence or proof of a
+candidate regression. A clean single-client baseline and matching-build acceptance
+remain required. This record covers the local trim and review commit. No new
+device QA, push, release, feed update or production notarization was performed.
 
-## Synthetic TLS peers
+## Scope and preservation
 
-Backend/tests/tls.rs compiles the exact private production verifier/configuration
-source via a path module, without exposing it as a new application API. Each
-fixture generates new synthetic certificate/key material in memory with rcgen;
-no device pairing record, stored private key or external TLS peer is used.
+Worktree: `fix/audit-hardening-main-20261104`, review parent `3feee73`, containing
+integration `1f4ea92` and TLS/publication validation `c0c07e7`, based on main `381d466`.
+The committed TLS, HTTP, audio, preparation, automation and release-publication
+changes are unchanged by this trim. Version metadata remains 0.5.2/build 8.
 
-For both TLS 1.2 and TLS 1.3:
+Before trimming, all 12 modified/untracked source/document files were copied and
+SHA-256 verified in `work/integration-validation/trim-snapshot-20261104-180005/`.
+That ignored local snapshot contains `manifest.json`, tracked/index patches,
+status, exact file copies and the full 621-line prior QA chronology at
+`files/docs/RELEASE-VALIDATION-2026-11-04.md`. Existing diagnostic reports and logs
+remain in `work/integration-validation/`. The original checkout and its unrelated
+feasibility documents are preserved. The snapshot and diagnostic artifacts remain
+ignored and are excluded from the review commit.
 
-- A pinned peer completes a full in-memory client/server handshake, with a DNS
-  name deliberately different from the certificate's name.
-- A valid but unpaired certificate fails with the pairing-certificate error.
-- A pinned peer whose signer corrupts the handshake signature fails with
-  InvalidCertificate(BadSignature).
+## Retained changes
 
-These are protocol-level tests with positive controls, not mocks of the decision
-being tested. The three test cases exercise six handshake paths. They are now
-included in scripts/test.sh. New certificate-generation dependencies are dev-only.
+- Recovery bookkeeping is independent of lifetime error totals. Native damage
+  remains pending until a fresh sync picture is successfully queued. The Mac
+  requires decoded progress through that checkpoint and a drained queue before
+  allowing responsive static-screen idle. Decoded queue positions include earlier
+  failed/skipped events, so historical drops cannot permanently poison idle.
+- New damage, queued-but-undecoded sync pictures, stalled decoding and cached
+  orientation heartbeats cannot hide missing decoded progress. The existing
+  one-second Swift stalled-output deadline remains; native refresh/restart and
+  startup/preparation deadlines are unchanged.
+- Saved diagnostics retain an allowlisted native failure category across stale
+  snapshots, cleanup and reconnect. Categories distinguish input timeout/error,
+  transport, feedback, orientation, recovery, setup and worker exits without raw
+  error text, command payloads or device identity. Unknown codes get a generic
+  label; a missing category remains decodable. Existing recovery policy is unchanged.
 
-## Publication ordering
+Independent offline comparison reproduced the historical-loss idle rejection in
+the pre-change source and its correction in the retained change; both versions
+still expired a cached heartbeat. This demonstrates the bookkeeping behavior, not the cause of
+any confounded device stall. Orientation liveness alone does not establish that
+video content is current; no new freshness policy is added here.
 
-scripts/release.sh still prepares and notarizes/signs artifacts when explicitly
-invoked for a release. It now delegates publication to scripts/publish-release.sh.
-Both paths require a reviewed main branch. Publication is ordered as follows:
+## Deferred changes
 
-1. Validate the built source SHA, clean index/change scope, increasing version and
-   build, artifact names, and matching prepared appcast enclosure/length/signature.
-2. Commit/push only Info.plist; the published feed still advertises the old version.
-3. Create a draft release pinned to that source/version commit and upload assets.
-4. Download the draft assets and compare their bytes to the prepared files.
-5. Publish the release, then verify both unauthenticated public download URLs and
-   byte equality with bounded curl requests.
-6. Recheck source HEAD and the prepared feed's hash; only then commit/push the feed.
+Removed from this candidate, preserved in the snapshot:
 
-The version tag stays on the source/version commit. Failure before the final feed
-push does not advertise missing assets. Partial success can leave a version commit,
-a draft, or a public release behind. If only the final push fails, the feed commit
-remains local and can be reviewed/retried with git push; the script does not force
-push, overwrite an existing release or automatically rebuild/re-sign artifacts.
+- The 100 ms admission retry, polling/pressure state, extra held frame, admission
+  wait counter and their dependent tests/documentation.
+- Incremental vendor assembler draining and its two tests. The vendor assembler
+  and its README are byte-identical to HEAD, preserving the original provenance.
+- The extra eight-second Swift recovery grace. Its test now checks that pending
+  recovery or an undecoded sync cannot extend the one-second output deadline.
 
-Sixteen offline tests use real temporary local Git repositories and fake
-GitHub/download/push commands. They cover ordering, upload/draft/public byte
-mismatch, unavailable public URLs, publish/source-push/feed-push failures, existing
-releases, mismatched enclosure metadata, feature branches, built-source drift and
-concurrent HEAD/feed edits, existing tags and failed remote tag queries. No test contacts GitHub or publishes anything.
+These were not established as necessary or correctly tuned by isolated device
+runs. The event queue again holds 16 items with the committed immediate-full
+recovery path; RTCP packet builders, ports and field semantics are unchanged.
 
-Python bridge/publication tests are now included in the default scripts/test.sh
-runner, with bytecode caches disabled.
+## Automated/build validation
 
-## Candidate/device results
+**197 tests passed**: 72 Rust, 91 Swift and 34 Python. The eight deferred
+admission/assembler tests are preserved in the snapshot rather than counted here.
+The revised watchdog regression confirms unresolved recovery and an undecoded
+sync cannot extend the existing one-second deadline. Formatting, diff checks,
+release build and strict ad-hoc signature verification passed. Existing recording
+API deprecation warnings remain unrelated to this change. No app was launched.
 
-The rebuilt candidate completed the coordinated checks below. The old audit/device
-evidence is not substituted for matching-build acceptance.
-
-Automated checks completed: **186 passed** (68 Rust, 84 Swift, 34 Python).
-The candidate release build and strict ad-hoc signature verification passed.
 Executable SHA-256:
-`38c31d2c1a8a9c56d34f453edab99d565da000882597102fc08188275f4012cc`.
-This matches the integration binary because the additional changes are test and
-publication tooling. Version metadata remains 0.5.2/build 8; a public patch release
-would be 0.5.3/build 9 after approval and the final signed/notarized build.
+`fbdc4d6b46ad0a5fc5f2b61d34230a685f87c53bf111330f46e299a2982adc0e`.
+Logs: `work/integration-validation/trim-build.log`, `trim-tests.log`,
+`trim-focused-rust.log` and `trim-focused-swift.log`.
 
-Read-only signing preflight found one Developer ID identity and successfully read
-the existing iPhoneMirror-notary profile's history. No signing credential contents
-were printed, and no production notarization submission or release was performed.
+Committed validation still includes paired/unpaired/corrupt-signature TLS tests
+for TLS 1.2/1.3 and 16 offline publication-order/failure tests. Those do not perform
+GitHub writes or prove production distribution. No new device behavior is claimed
+from automated checks or an ad-hoc signed build.
 
-Proposed 0.5.3 release notes:
+## Corrected device evidence
 
-- Strengthens paired-device TLS verification and encrypts Apple setup requests.
-- Bounds malformed HTTP responses and updates affected transport dependencies.
-- Improves audio mute/resume, startup recovery and buffering behavior.
-- Allows more time for device preparation before waiting for the first picture.
-- Rejects stale automation app responses after cancellation or reconnection.
+A separate `/Applications/iPhoneMirror.app` process (version 0.5.2) was found
+actively mirroring over Wi-Fi after the candidate had quit. It had been running
+for about 3 hours 40 minutes when checked; its saved report reached 71 attempts.
+Earlier cleanup checked only the candidate process path and missed that client.
+The affected control, audio, stability, long-silence and Camera observations are
+confounded.
+Synthetic tests and saved numeric observations remain valid within their scope.
 
-No Wi-Fi connection fix is claimed: the earlier discovery failure involved the
-phone and Mac being on different networks. Main's existing camera expiry,
-automation observations/events and saved agent-access preference are preserved.
+The installed copy was disconnected and quit. A check across all app paths then
+found no mirror app/probe process. After 30 seconds and closing/reopening Camera,
+the user confirmed its preview worked. This does not retroactively validate
+candidate-only teardown or establish that overlap caused every observed issue.
+The installed app was not replaced or uninstalled; idle MCP bridge clients were
+not killed or reconfigured. At that cleanup checkpoint, Agent Access was off,
+with no discovery file or listener, and audio was muted at 50%.
 
-### Readiness at the current handoff
+The subsequent local review found the installed app running again, its Agent
+Access preference enabled and its discovery file present. Process presence alone
+does not establish mirroring or a working listener; neither was tested. This
+review left the app and settings untouched and performed no new hardware QA.
+Audio preferences still showed muted at 50%.
 
-| Check | Result |
-| --- | --- |
-| Paired/unpaired/corrupted-signature TLS peers, TLS 1.2 and 1.3 | Passed |
-| Full native/Swift/Python automated coverage | 186 passed |
-| Release publication ordering and failure paths | 16 offline cases passed |
-| Build, ad-hoc signature, formatting/diff/secret scan | Passed |
-| Existing Developer ID identity / notary profile read | Available |
-| Candidate USB video, Home/Settings, fresh observations and events | Passed |
-| Candidate mutation/gesture exclusion in both directions | Passed; competing requests rejected with HTTP 409 |
-| Candidate app cancellation and interrupted-action receipts | Passed; busy state cleared |
-| Candidate audio mute/resume and volume | User confirmed all checks passed |
-| Candidate audio after USB reconnect | User confirmed automatic recovery |
-| Candidate Wi-Fi handoff, Home/Settings input and manual reconnect | Passed; actual Wi-Fi transport confirmed |
-| Candidate Camera baseline | User confirmed normal live preview before streaming |
-| Candidate post-disconnect Camera release | User confirmed normal live preview after explicit Disconnect and 20-second wait |
-| Candidate sleep/wake | Skipped at user request; unverified |
-| Candidate longer Wi-Fi stability | Concern: repeated recovered stalls; investigate before release |
-| Public release, notarized production distribution, feed publication | Not performed |
+Retained artifacts include `installed-copy-concurrent-stream.txt`,
+`failure-categories-final-reconnect.txt`, `failure-categories-wifi-idle.txt`,
+`admission-wifi-early-failure.txt` and `recovery-fix-wifi-failure.txt` in the ignored
+validation directory. Their device claims must be read with the qualification above.
 
-**Decision: hold public release pending review of the longer Wi-Fi run
-stalls.** Sleep/wake was skipped at the user's request. Short device checks passed,
-but they do not establish stable long-running Wi-Fi streaming.
-The candidate was opened from this worktree after the older audit app was stopped
-and quit, and after the user confirmed a normal Camera preview. USB video, Home and
-Settings navigation were verified. Both input actions reported dispatched/fresh
-observations and the resulting screens were inspected. Events reported opening,
-USB transport and the first frame without a cursor gap.
+## Future manual acceptance — not run by this task
 
-Concurrent device checks rejected an app mutation during a gesture and a gesture
-during an app mutation (HTTP 409). Cancelling an in-flight app request rejected its
-stale response. Cancelling an observed two-second gesture returned accepted with
-`dispatchStatus: unknown` and `observationStatus: action_interrupted`; this does not
-claim the gesture was never dispatched. Busy state cleared after all four cases.
-A subsequent USB diagnostics sample showed 12,456 assembled/queued frames, zero
-encoded queue overflows, discontinuities, media feedback failures and decoder
-errors, and zero failures across 1,153 orientation queries. This is a sampled
-session observation, not a measured end-to-end latency or frame-rate benchmark.
-
-After the user confirmed music was playing, mute was exercised for five seconds,
-then resumed, volume lowered to 25% and restored to 50%. A manual reconnect
-returned the app to enabled live controls. The user confirmed prompt mute, resume
-without stale replay, the expected 25%/50% volume changes, and automatic Mac audio
-recovery after USB reconnect. Wi-Fi audio and output-device switching were not
-separately confirmed. Agent access was switched off after automation QA; the discovery file was absent and its former
-loopback port was no longer listening.
-
-After the user unplugged USB, the app selected Wi-Fi and displayed live video.
-Home and a tap opening Settings were verified against the resulting mirrored
-screens. A manual reconnect while USB remained unplugged returned to live Wi-Fi
-with enabled controls. A diagnostics sample showed 947 assembled/queued frames,
-zero decoder errors, queue overflows, discontinuities or media feedback failures,
-and zero failures across 54 orientation queries. The preceding USB session lasted
-about 25 minutes after its manual reconnect, recording 40,402 frames with zero
-errors in those counters. USB removal ended that transport with remote release
-unconfirmed because the device was unreachable, then Wi-Fi produced its first
-picture about two seconds later. Manual close diagnostics reported waiting for
-the iPhone's 20-second stream expiry; this is not proof that Camera was released.
-
-### Final Camera check and stability caveat
-
-Mirroring was explicitly disconnected over Wi-Fi, audio restored to muted at 50%,
-and the app verified idle with phone controls disabled. After a 20-second wait,
-the user opened Camera directly on the iPhone and confirmed a normal live preview.
-The native cleanup status still described pending stream expiry; physical Camera
-availability is established by the user's check, not that status alone.
-
-The final diagnostics showed 25 total connection attempts during the candidate
-run. The retained 60-event tail contains **10 decoded-video stalls and one native
-connection failure** during the longer Wi-Fi period, with automatic reconnects and
-new first pictures afterward. Many stalled sessions recorded one encoded queue
-overflow/keyframe request despite zero decoder errors; the native failure recorded
-one orientation timeout at 750 ms. These observations do not establish the root
-cause or that the audit introduced a regression. Earlier zero-error samples must
-not be generalized to the full Wi-Fi run. The final session ran about 26 minutes
-before the explicit stop and recorded 23,860 frames with no queue overflow or
-decoder error. Intermittent earlier recovery still warrants investigation.
-
-The sanitized report is saved locally (ignored build evidence) at
-`work/integration-validation/candidate-final-diagnostics.txt`. No screen content,
-device identifier, token or raw error is included. A follow-up should compare a
-controlled Wi-Fi run against current main under the same network/device conditions,
-then investigate queue-overflow and orientation-timeout recovery as supported by
-that comparison. Sleep/wake remains outside this completed QA pass by user choice.
-No push, tag, public release, feed publication or production notarization occurred.
-
-Final cleanup verified the candidate process exited, `audioMuted=1`,
-`audioVolume=0.5`, and `automationAccessRequested=0`. The automation discovery file
-was absent and its former loopback port was closed. The original checkout and its
-three unrelated feasibility documents were preserved.
+1. Globally verify all mirror app/probe processes are closed. Confirm normal Camera
+   preview; close Camera and leave the unlocked iPhone on Settings on the Mac's Wi-Fi.
+2. Run exactly one verified executable/path/hash at a time. Check USB, Wi-Fi handoff,
+   input, audio and reconnect, then changing/static screens for 20–30 minutes if
+   the short check passes. Save diagnostics at the first failure. Stop and check
+   Camera between builds; do not overlap installed, candidate or Xcode clients.
+3. Explicitly Disconnect and quit, recheck all app paths, wait 30 seconds, then
+   check physical Camera preview. Record whether Camera needed closing/reopening.
+   Sleep/wake remains skipped at the user's request.

@@ -24,6 +24,7 @@ mod apps;
 mod dispatch;
 pub use dispatch::*;
 mod health;
+use health::Failure;
 mod media_cleanup;
 mod media_liveness;
 mod orientation;
@@ -227,22 +228,26 @@ pub unsafe extern "C" fn pm_start(udid: *const c_char, transports: u32) -> *mut 
     let worker_health = health.clone();
     let worker = thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            runtime()?.block_on(run(
-                &udid,
-                transports,
-                &tx,
-                &audio_tx,
-                command_rx,
-                apps_rx,
-                cancel_rx,
-                &worker_health,
-            ))
+            runtime()
+                .map_err(|e| health::failed(&worker_health, Failure::Runtime, e))?
+                .block_on(run(
+                    &udid,
+                    transports,
+                    &tx,
+                    &audio_tx,
+                    command_rx,
+                    apps_rx,
+                    cancel_rx,
+                    &worker_health,
+                ))
         }))
         .unwrap_or_else(|_| {
+            health::record_failure(&worker_health, Failure::Panic);
             Err("The native session stopped unexpectedly. Reconnect to try again.".into())
         });
         // Terminal delivery is bounded and cancellable by dropping the receiver in pm_close.
         if let Err(e) = result {
+            health::record_unclassified_failure(&worker_health);
             let _ = tx.send(PMEvent::message(3, e));
         }
         let _ = tx.send(PMEvent::message(4, "Disconnected"));
@@ -508,6 +513,9 @@ fn close_returns_final_health_even_when_terminal_delivery_was_blocked() {
     let worker = thread::spawn(move || {
         // pm_close must drop the event receiver before joining this worker.
         let _ = tx.send(PMEvent::message(4, "closed"));
+        health::record_failure(&worker_health, Failure::InputTimeout);
+        // A late media snapshot must not erase the worker's original failure.
+        health::Health::default().publish(&worker_health);
         worker_health.lock().unwrap().cleanup_status = 2;
     });
     let handle = Box::into_raw(Box::new(PMHandle {
@@ -525,6 +533,7 @@ fn close_returns_final_health_even_when_terminal_delivery_was_blocked() {
             serde_json::from_str(CStr::from_ptr(text).to_str().unwrap()).unwrap();
         pm_string_free(text);
         assert_eq!(value["cleanupStatus"], 2);
+        assert_eq!(value["failureCategory"], 4);
     }
 }
 
@@ -854,6 +863,7 @@ async fn stream(
         rotation,
         tx.clone(),
         timeout_factor,
+        health.clone(),
     ));
     let app_worker = tokio::spawn(apps::run(
         adapter.clone(),
@@ -894,8 +904,8 @@ async fn stream(
             biased;
             _ = cancelled(&mut cancel_media) => break Ok(()),
             _ = keepalive_timer.tick() => {
-                if let Err(error) = send_feedback(audio.send_to(audio_keepalive.port, audio_keepalive.packet()), &mut metrics).await { break Err(error); }
-                if let Err(error) = send_feedback(video.send_to(video_keepalive.port, video_keepalive.packet()), &mut metrics).await { break Err(error); }
+                if let Err(error) = send_feedback(audio.send_to(audio_keepalive.port, audio_keepalive.packet()), &mut metrics).await { break Err(health::failed(health, Failure::Feedback, error)); }
+                if let Err(error) = send_feedback(video.send_to(video_keepalive.port, video_keepalive.packet()), &mut metrics).await { break Err(health::failed(health, Failure::Feedback, error)); }
             }
             _ = timer.tick() => {
                 let observation = *orientation_rx.borrow();
@@ -904,28 +914,31 @@ async fn stream(
                 metrics.orientation_failures = u64::from(observation.failed);
                 metrics.last_packet_age_ms = last_packet.map(|time| time.elapsed().as_millis() as u64);
                 metrics.publish(health);
-                if observation.failed {break Err("Display orientation stopped responding. Reconnecting to restore safe controls.".into());}
-                if input.is_finished() {break Err("The input connection closed. Reconnect to continue.".into());}
+                if observation.failed {break Err(health::failed(health, Failure::Orientation, "Display orientation stopped responding. Reconnecting to restore safe controls."));}
+                if input.is_finished() {break Err(health::failed(health, Failure::InputStopped, "The input connection closed. Reconnect to continue."));}
                 // A static screen can legitimately send no RTP for several seconds.
                 // Orientation responses provide liveness; only time out stalled
                 // assembly when packets still arrive or integrity was lost.
-                let stalled = last_packet.is_some_and(|time| time.elapsed()<Duration::from_secs(1))
-                    || metrics.queue_overflows>0 || metrics.discontinuities>0;
-                if received && stalled && last_frame.elapsed()>Duration::from_secs(8) {break Err("The video pipeline stopped producing complete pictures. Reconnecting.".into());}
-                if stalled && last_frame.elapsed()>Duration::from_secs(2) {request_refresh=true;}
-                if !received && started.elapsed()>Duration::from_secs(20) {break Err("No complete video frame arrived. Unlock the iPhone and reconnect; iPhone › Setup Check… shows anything missing.".into());}
+                let packet_age = last_packet.map(|time| time.elapsed());
+                if metrics.video_stalled(last_frame.elapsed(), packet_age) {break Err(health::failed(health, Failure::VideoRecovery, "The video pipeline stopped producing complete pictures. Reconnecting."));}
+                if metrics.video_needs_refresh(last_frame.elapsed(), packet_age) {request_refresh=true;}
+                if !received && started.elapsed()>Duration::from_secs(20) {break Err(health::failed(health, Failure::FirstPicture, "No complete video frame arrived. Unlock the iPhone and reconnect; iPhone › Setup Check… shows anything missing."));}
                 if first_seq.is_some() {
-                    if let Err(error)=send_feedback(video.send_to(remote_video_port,build_rctl(our_ssrc,started.elapsed().as_millis() as u16,frames,relative_seq)), &mut metrics).await {break Err(error);}
+                    if let Err(error)=send_feedback(video.send_to(remote_video_port,build_rctl(our_ssrc,started.elapsed().as_millis() as u16,frames,relative_seq)), &mut metrics).await {break Err(health::failed(health, Failure::Feedback, error));}
                 }
                 if request_refresh && last_refresh.elapsed()>=Duration::from_millis(500) {
                     metrics.refresh_requests += 1;
-                    if let Err(error)=send_feedback(video.send_to(remote_video_port,build_keyframe_request(our_ssrc,&call_id,negotiated.ssrc,&[],fir)), &mut metrics).await {break Err(error);}
+                    if let Err(error)=send_feedback(video.send_to(remote_video_port,build_keyframe_request(our_ssrc,&call_id,negotiated.ssrc,&[],fir)), &mut metrics).await {break Err(health::failed(health, Failure::Feedback, error));}
                     fir=fir.wrapping_add(1);last_refresh=tokio::time::Instant::now();request_refresh=false;
                 }
             }
-            Some(_) = refresh_rx.recv() => {assembler.mark_stream_discontinuity();request_refresh=true;}
+            Some(_) = refresh_rx.recv() => {
+                assembler.mark_stream_discontinuity();
+                metrics.video_damaged();
+                request_refresh = true;
+            }
             audio_packet = audio.recv() => {
-                let packet = match audio_packet {Ok(p) => p, Err(_) => break Err("The USB media connection closed.".into())};
+                let packet = match audio_packet {Ok(p) => p, Err(_) => break Err(health::failed(health, Failure::AudioTransport, "The USB media connection closed."))};
                 if is_rtcp(&packet.data) {continue;}
                 let Some(rtp) = RtpPacket::parse(&packet.data) else {
                     if trace {eprintln!("audio: {} bytes did not parse as RTP", packet.data.len());}
@@ -947,7 +960,7 @@ async fn stream(
                 }
             }
             packet = video.recv() => {
-                let packet=match packet {Ok(p)=>p,Err(_)=>break Err("The USB video connection closed.".into())};
+                let packet=match packet {Ok(p)=>p,Err(_)=>break Err(health::failed(health, Failure::VideoTransport, "The USB video connection closed."))};
                 if is_rtcp(&packet.data) {continue;}
                 let Some(rtp)=RtpPacket::parse(&packet.data) else {continue;};
                 if rtp.payload_type!=negotiated.payload_type || rtp.ssrc!=negotiated.ssrc {continue;}
@@ -966,7 +979,7 @@ async fn stream(
                         HevcDepacketizerEvent::AccessUnit(unit) => {
                             metrics.assembled_frames += 1;
                             frames=frames.wrapping_add(1);
-                            if let Err(error)=send_feedback(video.send_to(remote_video_port,build_frame_ack(our_ssrc,unit.rtp_timestamp)), &mut metrics).await {break 'media Err(error);}
+                            if let Err(error)=send_feedback(video.send_to(remote_video_port,build_frame_ack(our_ssrc,unit.rtp_timestamp)), &mut metrics).await {break 'media Err(health::failed(health, Failure::Feedback, error));}
                             if let Some(config)=assembler.parameter_sets() {
                                 if config.revision != config_revision {
                                     config_changed=tokio::time::Instant::now();
@@ -976,13 +989,13 @@ async fn stream(
                                 let event=PMEvent {kind:2,values:[config.pixel_width,config.pixel_height,u32::from(unit.is_sync),unit.rtp_timestamp,current_orientation],
                                     parts:[unit.bytes,config.video_parameter_set,config.sequence_parameter_set,config.picture_parameter_set]};
                                 match tx.try_send(event) {
-                                    Ok(())=>{metrics.queued_frames+=1;received=true;last_frame=tokio::time::Instant::now();},
-                                    Err(mpsc::TrySendError::Full(_))=>{metrics.queue_overflows+=1;if trace {eprintln!("encoded queue full; requesting intra refresh");}assembler.mark_stream_discontinuity();request_refresh=true;break;},
+                                    Ok(())=>{metrics.video_queued(unit.is_sync);received=true;last_frame=tokio::time::Instant::now();},
+                                    Err(mpsc::TrySendError::Full(_))=>{metrics.queue_overflows+=1;metrics.video_damaged();if trace {eprintln!("encoded queue full; requesting intra refresh");}assembler.mark_stream_discontinuity();request_refresh=true;break;},
                                     Err(mpsc::TrySendError::Disconnected(_))=>{break 'media Ok(());},
                                 }
                             }
                         }
-                        HevcDepacketizerEvent::Discontinuity(reason)=>{metrics.discontinuities+=1;if trace {eprintln!("HEVC discontinuity: {reason:?}");}request_refresh=true;},
+                        HevcDepacketizerEvent::Discontinuity(reason)=>{metrics.discontinuities+=1;metrics.video_damaged();if trace {eprintln!("HEVC discontinuity: {reason:?}");}request_refresh=true;},
                         _=>{},
                     }
                 }
@@ -1077,13 +1090,14 @@ async fn input_loop(
     mut rotation: Option<OrientationServiceClient<Box<dyn ReadWrite>>>,
     events: mpsc::SyncSender<PMEvent>,
     timeout_factor: u32,
+    health: health::SharedHealth,
 ) {
     let mut keys = BTreeSet::new();
     let mut touch = None;
     // The HID gate needs a brief authentication settle, but video must drain immediately.
     tokio::select! {_=cancelled(&mut stop)=>return, _=tokio::time::sleep(Duration::from_millis(300))=>{}}
     loop {
-        let cmd = tokio::select! { biased; _=cancelled(&mut stop)=>break, c=commands.recv()=>match c {Some(c)=>c,None=>break} };
+        let cmd = tokio::select! { biased; _=cancelled(&mut stop)=>break, c=commands.recv()=>match c {Some(c)=>c,None=>{if !*stop.borrow() {health::record_failure(&health, Failure::InputStopped);}break}} };
         let command_timeout = if matches!(cmd, Command::Input(9 | 10, _, _)) {
             Duration::from_secs(2)
         } else if matches!(cmd, Command::PasteImage(..)) {
@@ -1271,10 +1285,13 @@ async fn input_loop(
             }
             Ok::<(), idevice::IdeviceError>(())
         };
-        if !matches!(
-            tokio::time::timeout(command_timeout, operation).await,
-            Ok(Ok(()))
-        ) {
+        let outcome = tokio::time::timeout(command_timeout, operation).await;
+        if let Some(failure) = health::input_failure(&outcome) {
+            // An operation finishing after session shutdown is cleanup evidence,
+            // not the cause of an otherwise normal user-requested stop.
+            if !*stop.borrow() {
+                health::record_failure(&health, failure);
+            }
             break;
         }
     }

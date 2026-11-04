@@ -211,9 +211,8 @@ final class NativeSession: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     health.maxDecodeMs = max(health.maxDecodeMs, UInt64(max(0, now - started) * 1000))
-    if failed { health.decoderErrors += 1 } else if !produced { health.skippedFrames += 1 }
+    health.recordDecode(produced: produced, failed: failed)
     if produced {
-      health.decodedFrames += 1
       if let lastOutput {
         health.maxOutputGapMs = max(health.maxOutputGapMs, UInt64(max(0, now - lastOutput) * 1000))
       }
