@@ -57,8 +57,8 @@ runner, with bytecode caches disabled.
 
 ## Candidate/device results
 
-Pending the full automated run, candidate rebuild and coordinated device checks.
-The old audit/device evidence is not substituted for matching-build acceptance.
+The rebuilt candidate completed the coordinated checks below. The old audit/device
+evidence is not substituted for matching-build acceptance.
 
 Automated checks completed: **186 passed** (68 Rust, 84 Swift, 34 Python).
 The candidate release build and strict ad-hoc signature verification passed.
@@ -93,14 +93,85 @@ automation observations/events and saved agent-access preference are preserved.
 | Release publication ordering and failure paths | 16 offline cases passed |
 | Build, ad-hoc signature, formatting/diff/secret scan | Passed |
 | Existing Developer ID identity / notary profile read | Available |
-| Candidate USB/Wi-Fi / audio / observation and cancellation | Pending coordinated device QA |
-| Candidate Camera baseline and post-disconnect release | Pending user baseline response |
-| Candidate sleep/wake and longer stability | Pending |
+| Candidate USB video, Home/Settings, fresh observations and events | Passed |
+| Candidate mutation/gesture exclusion in both directions | Passed; competing requests rejected with HTTP 409 |
+| Candidate app cancellation and interrupted-action receipts | Passed; busy state cleared |
+| Candidate audio mute/resume and volume | User confirmed all checks passed |
+| Candidate audio after USB reconnect | User confirmed automatic recovery |
+| Candidate Wi-Fi handoff, Home/Settings input and manual reconnect | Passed; actual Wi-Fi transport confirmed |
+| Candidate Camera baseline | User confirmed normal live preview before streaming |
+| Candidate post-disconnect Camera release | User confirmed normal live preview after explicit Disconnect and 20-second wait |
+| Candidate sleep/wake | Skipped at user request; unverified |
+| Candidate longer Wi-Fi stability | Concern: repeated recovered stalls; investigate before release |
 | Public release, notarized production distribution, feed publication | Not performed |
 
-**Decision: hold public release until matching-build device acceptance is recorded.**
-The candidate was opened from this worktree and its observation/events API was
-verified while disconnected. The user reported the phone connected/ready; the
-older audit app was stopped and quit. A baseline Camera check was requested before
-starting the candidate's first stream. No candidate device stream or phone input
-has been performed while that response is pending.
+**Decision: hold public release pending review of the longer Wi-Fi run
+stalls.** Sleep/wake was skipped at the user's request. Short device checks passed,
+but they do not establish stable long-running Wi-Fi streaming.
+The candidate was opened from this worktree after the older audit app was stopped
+and quit, and after the user confirmed a normal Camera preview. USB video, Home and
+Settings navigation were verified. Both input actions reported dispatched/fresh
+observations and the resulting screens were inspected. Events reported opening,
+USB transport and the first frame without a cursor gap.
+
+Concurrent device checks rejected an app mutation during a gesture and a gesture
+during an app mutation (HTTP 409). Cancelling an in-flight app request rejected its
+stale response. Cancelling an observed two-second gesture returned accepted with
+`dispatchStatus: unknown` and `observationStatus: action_interrupted`; this does not
+claim the gesture was never dispatched. Busy state cleared after all four cases.
+A subsequent USB diagnostics sample showed 12,456 assembled/queued frames, zero
+encoded queue overflows, discontinuities, media feedback failures and decoder
+errors, and zero failures across 1,153 orientation queries. This is a sampled
+session observation, not a measured end-to-end latency or frame-rate benchmark.
+
+After the user confirmed music was playing, mute was exercised for five seconds,
+then resumed, volume lowered to 25% and restored to 50%. A manual reconnect
+returned the app to enabled live controls. The user confirmed prompt mute, resume
+without stale replay, the expected 25%/50% volume changes, and automatic Mac audio
+recovery after USB reconnect. Wi-Fi audio and output-device switching were not
+separately confirmed. Agent access was switched off after automation QA; the discovery file was absent and its former
+loopback port was no longer listening.
+
+After the user unplugged USB, the app selected Wi-Fi and displayed live video.
+Home and a tap opening Settings were verified against the resulting mirrored
+screens. A manual reconnect while USB remained unplugged returned to live Wi-Fi
+with enabled controls. A diagnostics sample showed 947 assembled/queued frames,
+zero decoder errors, queue overflows, discontinuities or media feedback failures,
+and zero failures across 54 orientation queries. The preceding USB session lasted
+about 25 minutes after its manual reconnect, recording 40,402 frames with zero
+errors in those counters. USB removal ended that transport with remote release
+unconfirmed because the device was unreachable, then Wi-Fi produced its first
+picture about two seconds later. Manual close diagnostics reported waiting for
+the iPhone's 20-second stream expiry; this is not proof that Camera was released.
+
+### Final Camera check and stability caveat
+
+Mirroring was explicitly disconnected over Wi-Fi, audio restored to muted at 50%,
+and the app verified idle with phone controls disabled. After a 20-second wait,
+the user opened Camera directly on the iPhone and confirmed a normal live preview.
+The native cleanup status still described pending stream expiry; physical Camera
+availability is established by the user's check, not that status alone.
+
+The final diagnostics showed 25 total connection attempts during the candidate
+run. The retained 60-event tail contains **10 decoded-video stalls and one native
+connection failure** during the longer Wi-Fi period, with automatic reconnects and
+new first pictures afterward. Many stalled sessions recorded one encoded queue
+overflow/keyframe request despite zero decoder errors; the native failure recorded
+one orientation timeout at 750 ms. These observations do not establish the root
+cause or that the audit introduced a regression. Earlier zero-error samples must
+not be generalized to the full Wi-Fi run. The final session ran about 26 minutes
+before the explicit stop and recorded 23,860 frames with no queue overflow or
+decoder error. Intermittent earlier recovery still warrants investigation.
+
+The sanitized report is saved locally (ignored build evidence) at
+`work/integration-validation/candidate-final-diagnostics.txt`. No screen content,
+device identifier, token or raw error is included. A follow-up should compare a
+controlled Wi-Fi run against current main under the same network/device conditions,
+then investigate queue-overflow and orientation-timeout recovery as supported by
+that comparison. Sleep/wake remains outside this completed QA pass by user choice.
+No push, tag, public release, feed publication or production notarization occurred.
+
+Final cleanup verified the candidate process exited, `audioMuted=1`,
+`audioVolume=0.5`, and `automationAccessRequested=0`. The automation discovery file
+was absent and its former loopback port was closed. The original checkout and its
+three unrelated feasibility documents were preserved.
