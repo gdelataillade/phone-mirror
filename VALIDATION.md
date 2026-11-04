@@ -1004,3 +1004,135 @@ Wi-Fi in the app, same day (branch build, phone unplugged unless noted):
 Not yet verified: turning **Use Wi-Fi When Unplugged** off mid-session, the Setup
 Check "Turn On" button (the phone already had Wi-Fi connections on), a busy or
 distant network, and 60 fps workloads over Wi-Fi.
+
+## 2026-11-03 — Transport hardening: limited Wi-Fi device acceptance
+
+Tested the local hardened build (executable SHA-256
+`d3d391f619cec1e7f19506026345924fa4a48f44d248b0e20ba40092b70b7d7c`),
+not the installed Applications copy, on an iPhone 17 running iOS 27.2.
+
+- Discovery and the live title bar identified Wi-Fi; USB was not exposed. The
+  user explicitly chose Wi-Fi-only validation.
+- Mirroring produced a visible, updating picture with controls enabled after
+  certificate pinning and TLS handshake verification were added.
+- A tap opened Settings, and the Home command returned to Home. No settings
+  were changed and no text was entered.
+- Immediate start then Disconnect returned to idle and remained stopped for
+  more than 15 seconds. This is startup cancellation, not a deliberately delayed
+  developer-image preparation test.
+- Connecting again and manual Reconnect Now restored mirroring over Wi-Fi.
+- Final state: app open but disconnected; phone at Home; agent access off.
+
+This validates the exercised paired-device Wi-Fi path only. USB, switching
+between transports, fresh TSS personalization/mounting, a long preparation
+exceeding 25 seconds, hostile-peer TLS rejection, and extended stability remain
+unverified on hardware. No pairing/Developer Mode changes, screenshots saved to
+the repository, publication, or install over the Applications copy occurred.
+
+## 2026-11-04 — Audio and automation hardening
+
+- Audio settings are copied under the session lock and applied only by the audio
+  loop. Engine startup is marked successful only after start returns. Configuration
+  changes request recovery on that loop; muting stops and clears queued output.
+- Scheduled PCM is capped at 9,600 frames (200 ms at 48 kHz). Old completion
+  callbacks cannot release capacity belonging to a new stream.
+- App requests and gestures share one busy flag. App responses revalidate
+  cancellation, session, input epoch, agent access and control availability after
+  awaiting native work. Cancellation cannot undo a command already delivered.
+- Connection reports use the actual transport instead of always claiming USB.
+  This corrects an independent finding from the original audit.
+
+USB device acceptance used executable SHA-256
+`1b3d5810f17f0bb2fbc96f9faea0361425e83ec645148b8e68e3b08880b62b1a`
+on an iPhone 17 running iOS 27.2:
+
+- Settings launch and Home were visually verified.
+- An active two-second touch rejected app launch with 409; an active app-list
+  request rejected Home with 409. Primary requests completed with 200.
+- Release during an app request returned 200, and the pending request returned
+  409 rather than success. Busy cleared after every check.
+- With music confirmed playing, the user verified prompt mute, clean resume,
+  expected 25%/50% volume changes, and audio resumption after reconnect without
+  manually changing mute or restarting playback. An earlier attempt without
+  music was excluded from acceptance.
+
+The connected MCP bridge rejected observeAfter and appeared to serialize calls.
+Separate screenshots verified actions. Concurrency checks used authenticated
+loopback HTTP requests; credentials, device identifiers and app lists were not
+printed or retained. The automated playback-budget tests cover the 200 ms cap;
+no downstream hardware stall was induced. Output-device switching, forced engine
+startup failure and extended audio stability remain unverified.
+
+## 2026-11-04 — Wi-Fi validation and investigation cleanup
+
+The apparent discovery failure was a configuration mismatch: the user confirmed
+that the iPhone and Mac had been on different Wi-Fi networks. The user moved the
+phone onto the Mac's network. Finder wireless visibility had also been enabled
+and applied with explicit approval; it remained enabled after USB reconnection,
+while automatic syncing remained off. The individual effects of these two
+configuration changes were not isolated.
+
+With executable SHA-256
+`c0ffe53593b0cde06e533e25125f32e335118341ac55c7a3297eda26036f0520`,
+macOS listed a network entry matching the phone's USB identity. After unplugging,
+a raw snapshot showed zero USB and one network entry. The actual app verified:
+
+- Live pictures and enabled controls with Wi-Fi shown in the title.
+- Home and a Settings tap, verified in the mirrored image.
+- Manual reconnect while USB remained unplugged.
+- A live report correctly showing Transport: Wi-Fi.
+
+One orientation-query timeout caused an automatic Wi-Fi reconnect and recovery.
+The later sampled session showed 832 decoded frames, zero decoder errors, queue
+overflows, discontinuities or feedback failures, and 40 successful orientation
+queries. This is functional acceptance, not an uninterrupted stability run. Two
+USB queue-overflow reconnects were also seen in the earlier investigation; those
+are separate optional performance follow-ups. No connection-selection or TLS
+regression was established by the discovery investigation.
+
+At the user's request, the extra Finder-specific setup/README changes,
+investigation document and temporary wireless probes were removed. Wi-Fi
+connection logic was never changed. The independent transport-report correction
+and earlier security/audio/automation fixes were retained. The approved Finder
+Wi-Fi setting stays enabled, and automatic syncing stays off.
+
+Final device state after acceptance: phone at Home, local app disconnected,
+mirrored audio muted, and agent access verified off. The temporary Finder window
+was closed. Pairing and other device settings were preserved. No commit, push,
+publication or installation over /Applications occurred.
+
+Remaining acceptance limits: synthetic wrong-certificate/invalid-signature TLS
+fixtures, fresh TSS personalization/mounting, long preparation, output-device
+switching, sleep/wake, Wi-Fi audio listening and extended stability were not
+verified in this audit. No additional work is needed to resolve the reported
+Wi-Fi discovery issue.
+
+Cleanup verification: 55 Rust, 76 Swift and 15 Python tests passed (146 total).
+The release build, strict ad-hoc signature verification and diff check passed.
+The cleaned executable SHA-256 is
+`0dfbf16be12124c4f26344ae985678b54cdcd674d663b24349f4ae65b4d9fcda`.
+It was relaunched and discovered the phone over Wi-Fi while idle; agent access
+was verified off. Streaming/control acceptance above belongs to its recorded
+binary; no new stream was started after the cleanup rebuild.
+
+## 2026-11-04 — Integration onto current main
+
+The audit fixes were subsequently ported into an isolated checkout based on
+remote main `381d466f2a415afade16759e593a34791d430ce8`, preserving v0.5.2's camera
+stream expiry, dispatch observations, connection events and saved agent-access
+preference. Main already corrected transport reporting and app-mutation/gesture
+exclusion, so those implementations were preserved instead of replaced. App
+response cancellation/generation checks, audio ownership/bounds, transport
+hardening and preparation timing were ported.
+
+The earlier single-busy-flag implementation and its physical device results
+above belong to their recorded audit-branch binaries. They are not claims about
+the combined integration build. See
+[the integration record](docs/AUDIT-INTEGRATION-2026-11-04.md) for final checks,
+porting decisions and remaining acceptance requirements.
+
+Combined-main validation passed: release build and strict ad-hoc signature
+verification; 65 Rust, 84 Swift and 18 Python tests (167 total). Sixteen critical
+upstream files were verified unchanged. This validates the combined source and
+local build only; matching-build device acceptance and negative TLS peer fixtures
+remain required follow-ups before treating it as a release candidate.

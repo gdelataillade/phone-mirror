@@ -3,6 +3,18 @@ import XCTest
 @testable import MirrorCore
 
 final class VideoWatchdogTests: XCTestCase {
+  func testPreparationHasSeparateDeadline() {
+    var watchdog = VideoWatchdog(started: 0)
+    var health = SessionHealth()
+    health.native.stage = 3
+    watchdog.observe(health: health, now: 26)
+    XCTAssertFalse(watchdog.expired(now: 26))
+    XCTAssertTrue(watchdog.expired(now: 180))
+    health.native.stage = 6
+    watchdog.observe(health: health, now: 100)
+    XCTAssertFalse(watchdog.expired(now: 124))
+    XCTAssertTrue(watchdog.expired(now: 125))
+  }
   func testNoDecodedOutputTimesOutEvenIfEncodedFramesKeepArriving() {
     let watchdog = VideoWatchdog(started: 100)
     XCTAssertFalse(watchdog.expired(now: 124.9))
@@ -65,6 +77,6 @@ final class VideoWatchdogTests: XCTestCase {
   func testDeviceResponsesCannotHideMissingFirstPicture() {
     var watchdog = VideoWatchdog(started: 0)
     watchdog.observe(health: idleHealth(queries: 10), now: 24.9)
-    XCTAssertTrue(watchdog.expired(now: 25))
+    XCTAssertTrue(watchdog.expired(now: 50))
   }
 }

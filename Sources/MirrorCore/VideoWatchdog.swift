@@ -5,6 +5,8 @@ public struct VideoWatchdog {
   public static let staleAfter: TimeInterval = 1
   public static let startupTimeout: TimeInterval = 25
   private let started: TimeInterval
+  private var streamStarted: TimeInterval?
+  private var preparing = false
   private var lastFrame: TimeInterval?
   private var lastIdleHeartbeat: TimeInterval?
   private var orientationQueries: UInt64 = 0
@@ -17,6 +19,8 @@ public struct VideoWatchdog {
   /// error-free pipeline. Re-reading a cached health snapshot proves nothing.
   public mutating func observe(health: SessionHealth, now: TimeInterval) {
     let native = health.native
+    preparing = (1...5).contains(native.stage)
+    if native.stage == 6 && streamStarted == nil { streamStarted = now }
     guard native.stage == 6, health.decodedFrames > 0,
       native.queuedFrames == health.decodedFrames,
       native.assembledFrames == native.queuedFrames,
@@ -40,6 +44,7 @@ public struct VideoWatchdog {
   }
   public func expired(now: TimeInterval) -> Bool {
     if let lastFrame { return now - lastFrame >= Self.staleAfter && !healthyIdle(now: now) }
-    return now - started >= Self.startupTimeout
+    if preparing { return now - started >= 180 }
+    return now - (streamStarted ?? started) >= Self.startupTimeout
   }
 }

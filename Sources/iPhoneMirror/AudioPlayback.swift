@@ -1,6 +1,7 @@
 import AVFoundation
 import AudioToolbox
 import Foundation
+import MirrorCore
 
 // print() is stdout-buffered and can sit unflushed for a while when stdout isn't a
 // terminal; stderr is not, so debug tracing goes through here instead.
@@ -25,13 +26,17 @@ final class AudioPlayback {
   private var started = false
   private let trace = ProcessInfo.processInfo.environment["PM_TRACE"] != nil
   private var decodedCount = 0
-  /// Muted skips decoding entirely, not just silences output: no work happens
-  /// on the audio thread until the person opts in.
-  var muted = true {
-    didSet { player.volume = muted ? 0 : volume }
-  }
-  var volume: Float = 0.7 {
-    didSet { if !muted { player.volume = volume } }
+  // All engine/converter/player operations belong to NativeSession's audio loop.
+  // Notification and completion callbacks only touch the synchronized budget.
+  private let budget = AudioPlaybackBudget(limit: 9600)  // 200 ms at 48 kHz
+  private var configurationObserver: NSObjectProtocol?
+  private var muted = true
+
+  func update(muted: Bool, volume: Float) {
+    let configurationChanged = budget.takeInvalidation()
+    if configurationChanged || (muted && !self.muted) { stop() }
+    self.muted = muted
+    player.volume = muted ? 0 : min(1, max(0, volume))
   }
 
   init?() {
@@ -54,6 +59,9 @@ final class AudioPlayback {
     self.converter = converter
     engine.attach(player)
     engine.connect(player, to: engine.mainMixerNode, format: outputFormat)
+    configurationObserver = NotificationCenter.default.addObserver(
+      forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
+    ) { [budget] _ in budget.invalidate() }
     if trace { traceLog("AudioPlayback: initialized, output=\(outputFormat)") }
   }
 
@@ -94,12 +102,13 @@ final class AudioPlayback {
       return
     }
     if !started {
-      started = true
       do {
         try engine.start()
+        started = true
         if trace { traceLog("AudioPlayback: engine started") }
       } catch {
         traceLog("AudioPlayback: engine.start() failed: \(error)")
+        return
       }
       player.play()
     }
@@ -107,7 +116,15 @@ final class AudioPlayback {
     if trace, decodedCount == 1 {
       traceLog("AudioPlayback: first buffer decoded, frameLength=\(output.frameLength)")
     }
-    player.scheduleBuffer(output, completionHandler: nil)
+    let frames = output.frameLength
+    guard let generation = budget.reserve(frames) else {
+      // Prefer fresh audio to an accumulating delay after an output stall.
+      stop()
+      return
+    }
+    player.scheduleBuffer(output, completionCallbackType: .dataPlayedBack) { [budget] _ in
+      budget.complete(frames, generation: generation)
+    }
   }
 
   private func makeCompressedBuffer(_ payload: Data) throws -> AVAudioCompressedBuffer {
@@ -127,7 +144,16 @@ final class AudioPlayback {
   }
 
   func stop() {
+    budget.reset()
     player.stop()
     engine.stop()
+    converter.reset()
+    started = false
+  }
+
+  deinit {
+    if let configurationObserver {
+      NotificationCenter.default.removeObserver(configurationObserver)
+    }
   }
 }

@@ -60,9 +60,7 @@ final class NativeSession: @unchecked Sendable {
   private let audioLoopFinished = DispatchGroup()
   private let beforeDecode: (() -> Void)?
   var event: ((UInt32, String) -> Void)?
-  // Protected by `lock`: startAudioLoop assigns it once AudioPlayback exists, and
-  // applies whatever was last requested here, whichever order those two happen in.
-  private var audioPlayback: AudioPlayback?
+  // Protected by lock; only the audio loop touches AudioPlayback.
   private var desiredAudioMuted = true
   private var desiredAudioVolume: Float = 0.7
   // The local diagnostic injects a slow consumer here; the app uses no hook.
@@ -70,13 +68,11 @@ final class NativeSession: @unchecked Sendable {
   func setAudioMuted(_ muted: Bool) {
     lock.lock()
     desiredAudioMuted = muted
-    audioPlayback?.muted = muted
     lock.unlock()
   }
   func setAudioVolume(_ volume: Float) {
     lock.lock()
     desiredAudioVolume = volume
-    audioPlayback?.volume = volume
     lock.unlock()
   }
   func start(device: String, allowWiFi: Bool = false) {
@@ -182,18 +178,16 @@ final class NativeSession: @unchecked Sendable {
       defer { self.audioLoopFinished.leave() }
       let playback = AudioPlayback()
       if playback == nil { traceLog("audio loop: AudioPlayback() returned nil") }
-      self.lock.lock()
-      playback?.muted = self.desiredAudioMuted
-      playback?.volume = self.desiredAudioVolume
-      self.audioPlayback = playback
-      self.lock.unlock()
       var ended = false
       var received = 0
       while !ended {
         self.lock.lock()
         let shouldStop = self.cancelled
+        let muted = self.desiredAudioMuted
+        let volume = self.desiredAudioVolume
         self.lock.unlock()
         if shouldStop { break }
+        playback?.update(muted: muted, volume: volume)
         guard let item = pm_poll_audio(session, 100) else { continue }
         let kind = pm_event_kind(item)
         if kind == 7 {
@@ -210,9 +204,6 @@ final class NativeSession: @unchecked Sendable {
       }
       if trace { traceLog("audio loop: ended, received \(received) kind=7 events") }
       playback?.stop()
-      self.lock.lock()
-      self.audioPlayback = nil
-      self.lock.unlock()
     }
   }
   private func recordDecode(started: TimeInterval, produced: Bool, failed: Bool) {

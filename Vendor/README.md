@@ -46,3 +46,11 @@ Media/audio uses one owned UUID. Audio is drained but not played in the first pr
 
 The app uses the existing macOS usbmuxd trust relationship. It does not read protected
 pairing files, install a root daemon, embed Apple private frameworks, or install a runner.
+
+Local transport hardening (November 2026): device TLS pins the certificate from
+macOS's pairing record and verifies TLS handshake signatures, without requiring
+a public DNS name for the phone. TSS uses HTTPS; HTTPS redirects must retain the
+same authority and scheme. HTTP responses have bounded headers/body allocation,
+reject conflicting/truncated framing, and check oversized chunk lengths. The
+backend test runner includes synthetic HTTP regression fixtures. USB/Wi-Fi peer
+certificate compatibility and real TSS personalization require hardware QA.

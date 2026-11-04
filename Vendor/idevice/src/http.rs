@@ -14,6 +14,8 @@ use crate::{IdeviceError, ReadWrite};
 
 /// Maximum number of redirects to follow before giving up
 const MAX_REDIRECTS: usize = 10;
+const MAX_RESPONSE: usize = 8 * 1024 * 1024;
+const MAX_HEADERS: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
@@ -83,7 +85,13 @@ impl HttpRequest {
                     let Some(location) = resp.header("location") else {
                         return Ok(resp);
                     };
-                    url = resolve_redirect(&url, location)?;
+                    let next = resolve_redirect(&url, location)?;
+                    let before = parse_url(&url)?;
+                    let after = parse_url(&next)?;
+                    if before.https && (!after.https || before.authority != after.authority) {
+                        return Err(IdeviceError::Http("Unsafe HTTPS redirect".into()));
+                    }
+                    url = next;
                     debug!("following {} redirect to {url}", resp.status);
                     // 307/308 preserve the method and body; 301/302/303 degrade to
                     // a bodyless GET, matching browser and `reqwest` behavior.
@@ -286,7 +294,13 @@ async fn read_response(stream: &mut Box<dyn ReadWrite>) -> Result<HttpResponse, 
     // Read until the end of the header block.
     let head_end = loop {
         if let Some(pos) = find_subsequence(&buf, b"\r\n\r\n") {
+            if pos > MAX_HEADERS {
+                return Err(IdeviceError::Http("HTTP headers too large".into()));
+            }
             break pos;
+        }
+        if buf.len() > MAX_HEADERS {
+            return Err(IdeviceError::Http("HTTP headers too large".into()));
         }
         if !read_more(stream, &mut buf).await? {
             return Err(IdeviceError::Http(
@@ -305,8 +319,19 @@ async fn read_response(stream: &mut Box<dyn ReadWrite>) -> Result<HttpResponse, 
     let content_length = headers
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
-        .and_then(|(_, v)| v.trim().parse::<usize>().ok());
+        .map(|(_, v)| {
+            v.trim()
+                .parse::<usize>()
+                .map_err(|_| IdeviceError::Http("Invalid Content-Length".into()))
+        })
+        .transpose()?;
 
+    if content_length.is_some_and(|n| n > MAX_RESPONSE) {
+        return Err(IdeviceError::Http("HTTP body too large".into()));
+    }
+    if chunked && content_length.is_some() {
+        return Err(IdeviceError::Http("Conflicting HTTP framing".into()));
+    }
     let body = if chunked {
         // Connection: close means the peer closes after the final chunk, so read
         // to end-of-stream and decode the complete chunked body.
@@ -315,7 +340,7 @@ async fn read_response(stream: &mut Box<dyn ReadWrite>) -> Result<HttpResponse, 
     } else if let Some(len) = content_length {
         while buf.len() < body_start + len {
             if !read_more(stream, &mut buf).await? {
-                break; // truncated; return what we have
+                return Err(IdeviceError::Http("Truncated HTTP body".into()));
             }
         }
         let end = (body_start + len).min(buf.len());
@@ -342,6 +367,9 @@ async fn read_more(
     let n = stream.read(&mut tmp).await?;
     if n == 0 {
         return Ok(false);
+    }
+    if buf.len().saturating_add(n) > MAX_RESPONSE + MAX_HEADERS {
+        return Err(IdeviceError::Http("HTTP response too large".into()));
     }
     buf.extend_from_slice(&tmp[..n]);
     Ok(true)
@@ -394,7 +422,10 @@ fn decode_chunked(mut data: &[u8]) -> Result<Vec<u8>, IdeviceError> {
         if size == 0 {
             break; // last chunk; ignore any trailers
         }
-        if data.len() < size + 2 {
+        if size > MAX_RESPONSE
+            || out.len().saturating_add(size) > MAX_RESPONSE
+            || data.len() < size.saturating_add(2)
+        {
             return Err(err());
         }
         out.extend_from_slice(&data[..size]);
@@ -532,5 +563,14 @@ mod tests {
     fn decodes_chunked_with_extension() {
         let body = b"3;name=value\r\nabc\r\n0\r\n\r\n";
         assert_eq!(decode_chunked(body).unwrap(), b"abc");
+    }
+}
+
+#[cfg(test)]
+mod audit_regressions {
+    use super::*;
+    #[test]
+    fn oversized_chunk_is_rejected_without_panic() {
+        assert!(decode_chunked(b"ffffffffffffffff\r\n").is_err());
     }
 }

@@ -14,7 +14,7 @@ use crate::IdeviceError;
 /// TSS client version string sent in requests
 const TSS_CLIENT_VERSION_STRING: &str = "libauthinstall-1033.0.2";
 /// Apple's TSS endpoint URL
-const TSS_CONTROLLER_ACTION_URL: &str = "http://gs.apple.com/TSS/controller?action=2";
+const TSS_CONTROLLER_ACTION_URL: &str = "https://gs.apple.com/TSS/controller?action=2";
 
 /// Represents a TSS request to Apple's signing server
 #[derive(Debug)]
@@ -73,7 +73,7 @@ impl TSSRequest {
             "Sending TSS request: {}",
             crate::pretty_print_dictionary(&self.inner)
         );
-        // The TSS controller is plain HTTP, so no TLS/crypto provider is needed.
+        // Personalization identifiers require authenticated, encrypted transport.
         let res = crate::http::HttpRequest::post(TSS_CONTROLLER_ACTION_URL)
             .header("Cache-Control", "no-cache")
             .header("Content-type", "text/xml; charset=\"utf-8\"")

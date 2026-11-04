@@ -31,7 +31,7 @@ public struct NativeHealth: Codable, Equatable, Sendable {
   public init() {}
   public var stageLabel: String {
     switch stage {
-    case 1: return "USB connection"
+    case 1: return "Device connection"
     case 2: return "Developer services"
     case 3: return "Service discovery"
     case 4: return "Input services"
@@ -75,7 +75,7 @@ public struct SessionHealth: Equatable, Sendable {
         "Mirroring has stopped locally. The iPhone may need about 20 seconds to release Camera. If mirroring resumes over Wi-Fi, use Disconnect to end it."
     }
     if native.feedbackFailures > 0 {
-      return "The media feedback path stopped responding. Reconnect the cable and retry."
+      return "The media feedback path stopped responding. Reconnect and retry."
     }
     if native.orientationFailures > 0 {
       return "The iPhone stopped answering orientation queries. Reconnect to restore controls."

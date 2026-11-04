@@ -1,11 +1,5 @@
 // Jackson Coxson
-// https://gist.github.com/doroved/2c92ddd5e33f257f901c763b728d1b61
-//
-// Why:
-// https://github.com/rustls/rustls/issues/578
-// We aren't in control of the certs served.
-// Assuming that there's no use for unchecked certs is naive.
-
+// Authenticate the paired certificate without imposing a public DNS identity.
 use rustls::{
     ClientConfig, DigitallySignedStruct,
     client::{
@@ -21,11 +15,12 @@ use crate::{IdeviceError, pairing_file::PairingFile};
 #[derive(Debug)]
 pub struct NoServerNameVerification {
     inner: Arc<WebPkiServerVerifier>,
+    certificate: CertificateDer<'static>,
 }
 
 impl NoServerNameVerification {
-    pub fn new(inner: Arc<WebPkiServerVerifier>) -> Self {
-        Self { inner }
+    pub fn new(inner: Arc<WebPkiServerVerifier>, certificate: CertificateDer<'static>) -> Self {
+        Self { inner, certificate }
     }
 }
 
@@ -38,6 +33,11 @@ impl ServerCertVerifier for NoServerNameVerification {
         _ocsp: &[u8],
         _now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
+        if _end_entity.as_ref() != self.certificate.as_ref() {
+            return Err(rustls::Error::General(
+                "Device certificate does not match pairing record".into(),
+            ));
+        }
         Ok(ServerCertVerified::assertion())
     }
 
@@ -47,7 +47,7 @@ impl ServerCertVerifier for NoServerNameVerification {
         _cert: &CertificateDer<'_>,
         _dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
+        self.inner.verify_tls12_signature(_message, _cert, _dss)
     }
 
     fn verify_tls13_signature(
@@ -56,7 +56,7 @@ impl ServerCertVerifier for NoServerNameVerification {
         _cert: &CertificateDer<'_>,
         _dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
+        self.inner.verify_tls13_signature(_message, _cert, _dss)
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
@@ -71,11 +71,13 @@ pub fn create_client_config(pairing_file: &PairingFile) -> Result<ClientConfig, 
 
     let mut config = ClientConfig::builder()
         .with_root_certificates(root_store.clone())
-        .with_client_auth_cert(vec![pairing_file.host_certificate.clone()], private_key)
-        .unwrap();
+        .with_client_auth_cert(vec![pairing_file.host_certificate.clone()], private_key)?;
 
     let inner = rustls::client::WebPkiServerVerifier::builder(Arc::new(root_store)).build()?;
-    let verifier = Arc::new(NoServerNameVerification::new(inner));
+    let verifier = Arc::new(NoServerNameVerification::new(
+        inner,
+        pairing_file.device_certificate.clone(),
+    ));
     config.dangerous().set_certificate_verifier(verifier);
 
     Ok(config)

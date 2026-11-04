@@ -105,6 +105,7 @@ extension MirrorModel {
     if let expected = app.sessionID, expected != sessionID?.uuidString {
       throw AutomationFailure(409, "Session changed; observe again before acting")
     }
+    try Task.checkCancellation()
     guard !app.changesScreen || !automationBusy else {
       throw AutomationFailure(409, "Another agent action is running")
     }
@@ -114,6 +115,8 @@ extension MirrorModel {
     guard canControl, let native = session, let id = sessionID else {
       throw AutomationFailure(409, "Connect and unlock an iPhone; wait for stable video")
     }
+    if app.changesScreen { releaseInputs() }
+    let epoch = inputEpoch
     automationAppRequest = true
     automationAppMutation = app.changesScreen
     defer {
@@ -121,6 +124,11 @@ extension MirrorModel {
       automationAppMutation = false
     }
     let (status, result) = await native.app(app.nativeJSON)
+    try Task.checkCancellation()
+    guard automationEnabled, sessionID == id, inputEpoch == epoch, canControl else {
+      throw AutomationFailure(
+        409, "App request cancelled: session or input state changed; observe before retrying")
+    }
     guard status == 200 else {
       throw AutomationFailure(status, result["error"] as? String ?? "App request failed")
     }
