@@ -3,6 +3,37 @@ import XCTest
 @testable import MirrorCore
 
 final class GeometryTests: XCTestCase {
+  func testPortraitFrameDoesNotWidenIntoWindowLetterboxing() {
+    let screen = CGSize(width: 1206, height: 2624)
+    let fitted = MirrorGeometry.phoneFrameSize(
+      view: CGSize(width: 800, height: 600), screen: screen, inset: 24)
+    XCTAssertLessThan(fitted.width, 360)
+    XCTAssertEqual(fitted.height, 600, accuracy: 0.001)
+    // A wider window must keep the same phone/bar width when height is unchanged.
+    XCTAssertEqual(
+      fitted,
+      MirrorGeometry.phoneFrameSize(
+        view: CGSize(width: 1600, height: 600), screen: screen, inset: 24))
+    XCTAssertEqual(
+      (fitted.width - 48) / (fitted.height - 48), screen.width / screen.height, accuracy: 0.000001)
+  }
+
+  func testFittedFrameHandlesLandscapeAndHiddenBezel() {
+    for inset: CGFloat in [0, 24] {
+      let fitted = MirrorGeometry.phoneFrameSize(
+        view: CGSize(width: 800, height: 600), screen: CGSize(width: 2624, height: 1206),
+        inset: inset)
+      XCTAssertEqual(fitted.width, 800, accuracy: 0.001)
+      XCTAssertLessThan(fitted.height, 600)
+      XCTAssertEqual(
+        (fitted.width - inset * 2) / (fitted.height - inset * 2), 2624.0 / 1206, accuracy: 0.000001)
+    }
+    XCTAssertEqual(
+      MirrorGeometry.phoneFrameSize(
+        view: .zero, screen: CGSize(width: 1206, height: 2624), inset: 24),
+      .zero)
+  }
+
   func testNaturalPortraitVideoRotatesWithTouchCoordinates() {
     let encoded = CGSize(width: 1200, height: 2600)
     for (raw, turns) in [(UInt32(0), 0), (1, 2), (2, 3), (3, 1)] {

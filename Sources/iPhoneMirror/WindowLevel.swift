@@ -1,4 +1,5 @@
 import AppKit
+import MirrorCore
 import SwiftUI
 
 /// Applies the preference to the mirror window, including before a phone connects.
@@ -49,10 +50,48 @@ enum TitleBarMetrics {
 /// Simulator-style window: no backing or system shadow, so only the title bar and the phone
 /// are visible.
 struct MirrorWindowChrome: NSViewRepresentable {
+  let screenSize: CGSize
+  let showBezel: Bool
   func makeNSView(context: Context) -> ChromeView { ChromeView() }
-  func updateNSView(_ view: ChromeView, context: Context) {}
+  func updateNSView(_ view: ChromeView, context: Context) {
+    view.screenSize = screenSize
+    view.showBezel = showBezel
+    view.fitWindow()
+  }
 
   final class ChromeView: NSView {
+    var screenSize = CGSize.zero
+    var showBezel = true
+    private var fittedScreen = CGSize.zero
+    private var fittedBezel: Bool?
+
+    func fitWindow() {
+      guard let window, screenSize.width > 0, screenSize.height > 0,
+        fittedScreen != screenSize || fittedBezel != showBezel,
+        !window.styleMask.contains(.fullScreen)
+      else { return }
+      let current = window.contentView?.bounds.size ?? bounds.size
+      guard current.width > 0, current.height > TitleBarMetrics.chromeHeight else { return }
+      fittedScreen = screenSize
+      fittedBezel = showBezel
+      let inset: CGFloat = showBezel ? 48 : 0
+      let fitted = MirrorGeometry.phoneFrameSize(
+        view: CGSize(width: current.width, height: current.height - TitleBarMetrics.chromeHeight),
+        screen: screenSize, inset: inset / 2)
+      let minimumHeight: CGFloat = screenSize.width > screenSize.height ? 360 : 580
+      let scale = max(
+        (fitted.width - inset) / screenSize.width,
+        (360 - inset) / screenSize.width,
+        (minimumHeight - TitleBarMetrics.chromeHeight - inset) / screenSize.height)
+      let size = CGSize(
+        width: screenSize.width * scale + inset,
+        height: screenSize.height * scale + inset + TitleBarMetrics.chromeHeight)
+      // Constrain the actual window, keeping its resize edges beside the visible
+      // phone. Apply only when device geometry/bezel changes, never per layout pass.
+      window.contentAspectRatio = size
+      window.setContentSize(size)
+    }
+
     override func viewDidMoveToWindow() {
       super.viewDidMoveToWindow()
       guard let window else { return }
@@ -68,6 +107,7 @@ struct MirrorWindowChrome: NSViewRepresentable {
       window.toolbarStyle = .unified
       window.titlebarAppearsTransparent = true
       window.titleVisibility = .hidden
+      fitWindow()
     }
   }
 }

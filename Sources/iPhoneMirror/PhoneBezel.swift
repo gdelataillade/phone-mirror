@@ -14,10 +14,10 @@ struct PhoneFrame<Screen: View>: View {
   var body: some View {
     GeometryReader { proxy in
       let inset: CGFloat = showBezel ? 24 : 0
-      let available = CGSize(
-        width: max(1, proxy.size.width - inset * 2),
-        height: max(1, proxy.size.height - inset * 2))
-      let size = MirrorGeometry.contentRect(view: available, screen: screenSize).size
+      let frame = MirrorGeometry.phoneFrameSize(
+        view: proxy.size, screen: screenSize, inset: inset)
+      let size = CGSize(
+        width: max(0, frame.width - inset * 2), height: max(0, frame.height - inset * 2))
       let radius = min(size.width, size.height) * 0.12
       screen(radius, inset * 2)
         .frame(width: size.width, height: size.height)

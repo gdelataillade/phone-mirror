@@ -147,32 +147,44 @@ struct MirrorWindow: View {
   @ObservedObject var model: MirrorModel
   @ObservedObject var recorder: RecordingController
   var body: some View {
-    VStack(spacing: TitleBarMetrics.gap) {
-      MirrorTitleBar(model: model, recorder: recorder)
-        .padding([.horizontal, .top], TitleBarMetrics.margin)
-      ZStack {
-        PhoneFrame(screenSize: model.screenSize, showBezel: showDeviceBezel) { radius, inset in
-          ZStack {
-            if model.session != nil {
-              MirrorSurface(model: model, cornerRadius: radius, bezelInset: inset)
-                .id(model.sessionID).opacity(model.hasPicture ? 1 : 0)
+    GeometryReader { proxy in
+      let area = CGSize(
+        width: proxy.size.width, height: max(0, proxy.size.height - TitleBarMetrics.chromeHeight))
+      let width = MirrorGeometry.phoneFrameSize(
+        view: area, screen: model.screenSize, inset: showDeviceBezel ? 24 : 0
+      ).width
+      VStack(spacing: TitleBarMetrics.gap) {
+        MirrorTitleBar(model: model, recorder: recorder)
+          .padding([.horizontal, .top], TitleBarMetrics.margin)
+        ZStack {
+          PhoneFrame(screenSize: model.screenSize, showBezel: showDeviceBezel) { radius, inset in
+            ZStack {
+              if model.session != nil {
+                MirrorSurface(model: model, cornerRadius: radius, bezelInset: inset)
+                  .id(model.sessionID).opacity(model.hasPicture ? 1 : 0)
+              }
+              if !model.hasPicture { connectionView }
             }
-            if !model.hasPicture { connectionView }
+          }
+          if let notice = model.screenshotNotice {
+            VStack {
+              Text(notice).font(.callout).padding(10)
+                .background(.regularMaterial, in: Capsule()).padding(.top, 12)
+              Spacer()
+            }.allowsHitTesting(false)
           }
         }
-        if let notice = model.screenshotNotice {
-          VStack {
-            Text(notice).font(.callout).padding(10)
-              .background(.regularMaterial, in: Capsule()).padding(.top, 12)
-            Spacer()
-          }.allowsHitTesting(false)
-        }
       }
+      .frame(width: width)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
     // The bar replaces the titlebar, so it takes the titlebar's place at the very top.
     .ignoresSafeArea(.container, edges: .top)
     .background(MirrorWindowLevel(alwaysOnTop: alwaysOnTop).allowsHitTesting(false))
-    .background(MirrorWindowChrome().allowsHitTesting(false))
+    .background(
+      MirrorWindowChrome(screenSize: model.screenSize, showBezel: showDeviceBezel).allowsHitTesting(
+        false)
+    )
     .navigationTitle(model.selected?.name ?? "iPhoneMirror")
     .alert(
       "Could not capture screenshot",
@@ -334,7 +346,9 @@ struct MirrorTitleBar: View {
       .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
     }
     .padding(.horizontal, 6)
-    .frame(maxWidth: .infinity, minHeight: TitleBarMetrics.height, maxHeight: TitleBarMetrics.height)
+    .frame(
+      maxWidth: .infinity, minHeight: TitleBarMetrics.height, maxHeight: TitleBarMetrics.height
+    )
     .contentShape(Rectangle())
     .gesture(WindowDragGesture())
     .allowsWindowActivationEvents(true)

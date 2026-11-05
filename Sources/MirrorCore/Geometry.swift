@@ -33,6 +33,19 @@ public struct ScreenPresentation: Equatable {
 }
 
 public enum MirrorGeometry {
+  /// The fitted screen plus its surrounding frame space. Chrome above the phone
+  /// uses this same width instead of stretching across transparent letterboxing.
+  public static func phoneFrameSize(view: CGSize, screen: CGSize, inset: CGFloat) -> CGSize {
+    guard view.width.isFinite, view.height.isFinite, view.width > 0, view.height > 0 else {
+      return .zero
+    }
+    let available = CGSize(
+      width: max(1, view.width - inset * 2), height: max(1, view.height - inset * 2))
+    let size = contentRect(view: available, screen: screen).size
+    guard size.width > 0, size.height > 0 else { return .zero }
+    return CGSize(width: size.width + inset * 2, height: size.height + inset * 2)
+  }
+
   public static func contentRect(view: CGSize, screen: CGSize) -> CGRect {
     guard
       [view.width, view.height, screen.width, screen.height].allSatisfy({ $0.isFinite && $0 > 0 })

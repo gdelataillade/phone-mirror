@@ -419,6 +419,9 @@ import SwiftUI
     return ok
   }
   func updateVideoState() {
+    // Calling a mutating method on @Published lifecycle emits even when its idle
+    // tick changes nothing. Don't rebuild the window ten times a second at rest.
+    guard active else { return }
     let now = ProcessInfo.processInfo.systemUptime
     // Drain attach/detach notifications before the retry timer; replug skips backoff.
     for _ in 0..<64 {
