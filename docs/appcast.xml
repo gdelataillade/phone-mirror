@@ -9,6 +9,14 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <description>Updates for iPhoneMirror</description>
     <language>en</language>
     <item>
+      <title>Version 0.5.3</title>
+      <pubDate>Thu, 05 Nov 2026 13:20:30 +0000</pubDate>
+      <sparkle:version>9</sparkle:version>
+      <sparkle:shortVersionString>0.5.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/gdelataillade/phone-mirror/releases/download/v0.5.3/iPhoneMirror-0.5.3.zip" sparkle:edSignature="Z0iOUzpzB64UVXpB6DVK2riXyFiP8JZ9wcVsV4Gni64pwI+GEsgdI2cYr9mVeMA0x8aZopeNFL4Z6U9Jw3prAQ==" length="5431832" type="application/octet-stream" />
+    </item>
+    <item>
       <title>Version 0.5.2</title>
       <pubDate>Thu, 15 Oct 2026 13:53:53 +0000</pubDate>
       <sparkle:version>8</sparkle:version>
@@ -66,6 +74,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </item>
   </channel>
 </rss><!-- sparkle-signatures:
-edSignature: 5uQYaucYtTTQm89UwCs+33vHSIm1KKqgZ+Tanu7/4eyfw0uSybVx1K74f/Cvd7/r2eSOI1VaPXVHpx/vLkMuBA==
-length: 4638
+edSignature: jdOt1aZwZt1itkw5EnESH9flWNI2IQDRqTdSc1CEKKeYFgCNgJw+v06FvvLFIjy0mYVUQlDtmut03EpCntihCA==
+length: 5217
 -->
